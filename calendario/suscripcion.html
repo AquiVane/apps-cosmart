@@ -15,7 +15,7 @@
   <div id="cargando" class="cargando">Cargando…</div>
 
   <div id="contenido" class="oculto" style="display:flex;flex-direction:column;gap:16px;">
-    <div class="aviso" id="aviso-prueba">Tenés 7 días de prueba gratis. Ingresá tu tarjeta ahora y la suscripción empieza sola cuando termine la prueba. Cancelás cuando quieras.</div>
+    <div class="aviso" id="aviso-prueba">Tenés <span class="dias-prueba">3</span> días de prueba gratis. Ingresá tu tarjeta ahora y la suscripción empieza sola cuando termine la prueba. Cancelás cuando quieras.</div>
     <div class="aviso suave oculto" id="aviso-vencida">Tu prueba terminó. Elegí un plan para seguir usando tu calendario. Tus datos están guardados.</div>
 
     <section class="auth-card">
@@ -67,8 +67,8 @@ function pintarPlanes() {
 }
 function textoPago() {
   $('nota-pago').textContent = medio === 'mp'
-    ? 'Pagás en pesos con Mercado Pago. Se cobra recién cuando terminan los 7 días de prueba.'
-    : 'Pagás en dólares con PayPal. Se cobra recién cuando terminan los 7 días de prueba.';
+    ? `Pagás en pesos con Mercado Pago. Se cobra recién cuando terminan los ${precios().trialDias} días de prueba.`
+    : `Pagás en dólares con PayPal. Se cobra recién cuando terminan los ${precios().trialDias} días de prueba.`;
 }
 
 async function montarBrick() {
@@ -152,6 +152,7 @@ function elegirPlan(p) {
   $('tab-mp').onclick = () => elegirMedio('mp');
   $('tab-pp').onclick = () => elegirMedio('pp');
   $('salir').onclick = logoutUser;
+  document.querySelectorAll('.dias-prueba').forEach(e => { e.textContent = precios().trialDias; });
   pintarPlanes(); textoPago();
   const sdk = setInterval(() => { if (window.MercadoPago) { clearInterval(sdk); montarBrick().catch(e => msg(e.message)); } }, 150);
   setTimeout(() => { clearInterval(sdk); if (!brick && medio === 'mp') montarBrick().catch(() => {}); }, 8000);

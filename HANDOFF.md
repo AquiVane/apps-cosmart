@@ -12,7 +12,7 @@ Menú lateral: "Más para tu negocio" con tarjetas de venta (Plata en Orden `aca
 
 ### ESTADO (18/10): frontend conectado al backend real, SIN desplegar
 El frontend ya habla con `cosmart-training-core` (`/api/apps/*`, ver `cosmart-workers/HANDOFF.md`, entrada 18/10). **No hay modo demo ni seed**: `js/firebase.js` apunta al worker real.
-- **Pantallas**: `login.html` (ingresar / crear cuenta / olvidé mi contraseña), `suscripcion.html` (plan mensual USD 7 o anual USD 77 con "1 mes de regalo" los primeros 7 días; pago con Card Payment Brick de Mercado Pago, en pesos al dólar del día, o PayPal Subscriptions; 7 días de prueba con tarjeta), `reset-password.html` (link del mail), `index.html` (la app).
+- **Pantallas**: `login.html` (ingresar / crear cuenta / olvidé mi contraseña), `suscripcion.html` (plan mensual USD 7 o anual USD 77 con "1 mes de regalo" si se elige en los primeros 7 días del registro; pago con Card Payment Brick de Mercado Pago, en pesos al dólar del día, o PayPal Subscriptions; 3 días de prueba con tarjeta), `reset-password.html` (link del mail), `index.html` (la app).
 - **Regla**: sin suscripción NO se usa la app. `index.html` pide `/api/apps/me` al iniciar y, si `suscripcion.activo` es falso, manda a `suscripcion.html`; el backend además devuelve 402 en los datos.
 - **Datos**: `js/data.js` traduce las rutas del Hub (`/data/:id/:tipo`) a `/api/apps/data/:tipo` (aislado por la sesión). Lo que no existe en esta app (equipo, admin, notificaciones) se resuelve vacío sin red. **Sin subida de archivos** (se pegan links); el campo de imágenes y el logo están ocultos.
 - **Mi suscripción** (en Mis cuentas): estado, plan, y botón Cancelar (usa `/api/apps/baja`).
@@ -32,3 +32,8 @@ Nombre: "Calendario de contenidos" (no cambiar). Precio: plan anual. Es una app 
 
 ### Textos
 Aprobados por Vaneh (18/10): aviso de prueba, planes, mensaje al terminar la prueba y el tip de "La voz de tu marca" con el link a IA para Emprendedores (`training.cosmart.com.ar/iaprincipiantes`). El prompt para la IA NO se agrega: las instrucciones ya están en la plantilla de Excel.
+
+### Cambios 20/10 (Vaneh)
+- La prueba pasó de 7 a **3 días** (`APP.trialDias` en `cosmart-workers/.../apps-calendario.js`; el regalo del anual sigue siendo 7 días desde el registro).
+- La portada NO lleva directo al registro (el botón se sacó): Vaneh quiere primero la **portada de la tienda de apps** y la **landing de venta del Calendario** (todo lleva a la compra). Ella pasa el material; ver HANDOFF de `training` para las reglas de landings de producto (sin lead magnets ni desvíos).
+- Políticas: redactar el párrafo de suscripción/renovación automática y actualizar términos y privacidad (pendiente de aprobación de texto).
