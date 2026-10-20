@@ -65,10 +65,12 @@ function pintarPlanes() {
   $('plan-mensual').setAttribute('aria-pressed', plan === 'mensual');
   $('plan-anual').setAttribute('aria-pressed', plan === 'anual');
 }
+// Con prueba vigente el primer cobro llega recién cuando termina; si ya terminó, se cobra al confirmar.
+const cobro = () => precios().trialDias > 0 ? `Se cobra recién cuando terminan los ${precios().trialDias} días de prueba.` : 'Se cobra hoy, al confirmar.';
 function textoPago() {
   $('nota-pago').textContent = medio === 'mp'
-    ? `Pagás en pesos con Mercado Pago. Se cobra recién cuando terminan los ${precios().trialDias} días de prueba.`
-    : `Pagás en dólares con PayPal. Se cobra recién cuando terminan los ${precios().trialDias} días de prueba.`;
+    ? `Pagás en pesos con Mercado Pago. ${cobro()}`
+    : `Pagás en dólares con PayPal. ${cobro()}`;
 }
 
 async function montarBrick() {
@@ -99,7 +101,7 @@ function cargarPayPal() {
   return new Promise((ok, no) => {
     if (window.paypal) return ok();
     const s = document.createElement('script');
-    s.src = `https://www.paypal.com/sdk/js?client-id=${PAYPAL_CLIENT_ID}&vault=true&intent=subscription&currency=USD`;
+    s.src = `https://www.paypal.com/sdk/js?client-id=${PAYPAL_CLIENT_ID}&vault=true&intent=subscription&currency=USD&locale=es_AR`;
     s.onload = ok; s.onerror = () => no(new Error('No pudimos cargar PayPal.'));
     document.head.appendChild(s);
   });
@@ -108,11 +110,13 @@ async function montarPayPal() {
   const cont = $('pp-botones'); cont.innerHTML = '';
   try { await cargarPayPal(); } catch (e) { msg(e.message); return; }
   paypal.Buttons({
-    style: { layout: 'vertical', shape: 'rect', label: 'subscribe' },
+    fundingSource: paypal.FUNDING.PAYPAL, // solo el botón de PayPal: con tarjeta se paga desde la pestaña "Tarjeta"
+    style: { layout: 'vertical', shape: 'rect', color: 'gold', height: 48, label: 'subscribe', tagline: false },
     createSubscription: async (data, actions) => {
       msg('');
-      const { planId } = await llamar('POST', '/api/apps/paypal-plan', { plan });
-      return actions.subscription.create({ plan_id: planId });
+      const { planId, startTime } = await llamar('POST', '/api/apps/paypal-plan', { plan });
+      // startTime: el primer cobro empieza cuando termina la prueba que ya está corriendo
+      return actions.subscription.create(startTime ? { plan_id: planId, start_time: startTime } : { plan_id: planId });
     },
     onApprove: async data => {
       try { exito(await llamar('POST', '/api/apps/paypal', { subscriptionID: data.subscriptionID, plan })); }
@@ -142,8 +146,9 @@ function elegirPlan(p) {
   if (!getSessionToken()) { location.href = 'login.html'; return; }
   try { cuenta = await obtenerCuenta(); } catch (e) { $('cargando').textContent = e.message; return; }
   if (!cuenta) return;
-  if (cuenta.suscripcion.activo) { location.href = 'app.html'; return; }
-  const previa = ['vencida', 'baja'].includes(cuenta.suscripcion.estado);
+  // En la prueba gratis sin tarjeta se puede entrar a esta página a suscribirse; con suscripción vigente, directo a la app.
+  if (cuenta.suscripcion.activo && cuenta.suscripcion.estado !== 'prueba') { location.href = 'app.html'; return; }
+  const previa = ['vencida', 'baja'].includes(cuenta.suscripcion.estado) || cuenta.suscripcion.precios.trialDias <= 0;
   $('aviso-prueba').classList.toggle('oculto', previa);
   $('aviso-vencida').classList.toggle('oculto', !previa);
   $('cargando').classList.add('oculto'); $('contenido').classList.remove('oculto');
