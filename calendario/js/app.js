@@ -823,24 +823,6 @@ function renderSection(sec) {
   else if (sec === 'cuentas') { renderCuentas(content); }
   else if (sec === 'dashboard') { renderDashboard(content); setTimeout(refreshIcons, 50); }
   else if (sec === 'contenidos') {
-    const plantillaBtn = document.createElement('a');
-    plantillaBtn.className = 'btn btn-secondary';
-    plantillaBtn.innerHTML = ico('file-spreadsheet') + ' Plantilla Excel';
-    plantillaBtn.href = 'plantillas/Plantilla_Contenidos_Hub_COSMART.xlsx';
-    plantillaBtn.setAttribute('download', 'Plantilla_Contenidos_Hub_COSMART.xlsx');
-    plantillaBtn.title = 'Descargar la plantilla vacía para cargar el calendario de contenidos';
-    actions.appendChild(plantillaBtn);
-    const importBtn = document.createElement('button');
-    importBtn.className = 'btn btn-secondary';
-    importBtn.innerHTML = ico('download') + ' Importar Excel';
-    importBtn.onclick = () => openImportModal();
-    actions.appendChild(importBtn);
-    const exportBtn = document.createElement('button');
-    exportBtn.className = 'btn btn-secondary';
-    exportBtn.innerHTML = ico('upload') + ' Exportar Excel';
-    exportBtn.title = 'Bajar el calendario de contenidos cargado, con las mismas columnas que la plantilla';
-    exportBtn.onclick = () => exportarContenidosExcel();
-    actions.appendChild(exportBtn);
     if (user.role !== 'client') {
       const dupBtn = document.createElement('button');
       dupBtn.className = 'btn btn-secondary';
@@ -862,6 +844,7 @@ function renderSection(sec) {
     actions.appendChild(btn);
     compactarAccionesMobile(actions);
     renderContenidos(content);
+    content.insertBefore(crearBarraExcel(), content.firstChild);
     setTimeout(refreshIcons, 50);
   }
   else if (sec === 'guiones') {
@@ -3667,6 +3650,15 @@ const IMPORT_HEADER_MAP = {
 
 const ACCENT_MAP = { á: 'a', é: 'e', í: 'i', ó: 'o', ú: 'u', ñ: 'n', ü: 'u' };
 
+// Hoja con los datos: la que se llama como el módulo o, si no, la primera que NO sea "Instrucciones" (antes se leía
+// siempre la primera hoja y daba error si era "Instrucciones").
+function nombreHojaDatos(wb, nombre) {
+  const n = normalizeHeader(nombre);
+  return wb.SheetNames.find(s => normalizeHeader(s) === n)
+    || wb.SheetNames.find(s => !/^instrucciones?$/i.test(String(s).trim()))
+    || wb.SheetNames[0];
+}
+
 function normalizeHeader(h) {
   return String(h || '')
     .toLowerCase()
@@ -4006,7 +3998,7 @@ document.getElementById('quick-update-file-input').addEventListener('change', as
     await loadXLSXLib();
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const sheet = wb.Sheets[nombreHojaDatos(wb, 'contenidos')];
     const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
     if (!raw.length) { statusEl.textContent = 'El archivo no tiene filas.'; return; }
 
@@ -4129,7 +4121,7 @@ document.getElementById('import-file-input').addEventListener('change', async (e
     await loadXLSXLib();
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
-    const sheetName = wb.SheetNames.find(n => normalizeHeader(n) === 'contenidos') || wb.SheetNames[0];
+    const sheetName = nombreHojaDatos(wb, 'contenidos');
     const sheet = wb.Sheets[sheetName];
     const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
     if (!raw.length) { statusEl.textContent = 'El archivo no tiene filas.'; return; }
@@ -6861,7 +6853,7 @@ document.getElementById('import-campana-file-input').addEventListener('change', 
     await loadXLSXLib();
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
-    const sheetName = wb.SheetNames.find(n => normalizeHeader(n) === 'campanas') || wb.SheetNames[0];
+    const sheetName = nombreHojaDatos(wb, 'campanas');
     const sheet = wb.Sheets[sheetName];
     const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
     if (!raw.length) { statusEl.textContent = 'El archivo no tiene filas.'; return; }
@@ -8110,4 +8102,19 @@ function renderMiSuscripcion() {
       }
     });
   });
+}
+
+
+// Importar / exportar Excel SIEMPRE a la vista (antes estaban escondidos en el menú "⋯" del celular).
+function crearBarraExcel() {
+  const bar = document.createElement('div');
+  bar.className = 'excel-bar';
+  bar.innerHTML = `
+    <a class="btn btn-secondary" href="plantillas/Plantilla_Calendario_Contenidos.xlsx" download="Plantilla_Calendario_Contenidos.xlsx" title="Descargar la plantilla vacía para cargar tus contenidos">${ico('file-spreadsheet')}<span>Plantilla Excel</span></a>
+    <button type="button" class="btn btn-secondary" id="xl-importar" title="Subir tus contenidos desde un Excel">${ico('download')}<span>Importar Excel</span></button>
+    <button type="button" class="btn btn-secondary" id="xl-exportar" title="Bajar tus contenidos a un Excel, con las mismas columnas que la plantilla">${ico('upload')}<span>Exportar Excel</span></button>`;
+  bar.querySelector('#xl-importar').onclick = () => openImportModal();
+  bar.querySelector('#xl-exportar').onclick = () => exportarContenidosExcel();
+  setTimeout(refreshIcons, 0);
+  return bar;
 }
