@@ -586,7 +586,7 @@ async function setupClientSwitcher() {
     dropdown.querySelectorAll('.client-switcher-item').forEach(item => {
       item.addEventListener('click', () => {
         const id = item.dataset.clientId;
-        if (id !== clientId) window.location.href = `index.html?client=${id}`;
+        if (id !== clientId) window.location.href = `app.html?client=${id}`;
         else dropdown.classList.add('hidden');
       });
     });

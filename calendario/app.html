@@ -1,0 +1,1396 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>(function(){try{var t=localStorage.getItem('hub_theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+  <title>Calendario de contenidos · COSMART</title>
+  <!-- Tamaños explícitos (192/512) para que Chrome/Android no use el ícono
+  del manifest (fondo sólido, a propósito para el ícono instalado) como
+  favicon de la pestaña -- ver comentario completo en admin/index.html. -->
+  <link rel="icon" type="image/png" href="favicon-cosmart.png?v=2">
+  <link rel="icon" type="image/png" sizes="192x192" href="favicon-cosmart.png?v=2">
+  <link rel="icon" type="image/png" sizes="512x512" href="favicon-cosmart.png?v=2">
+  <meta name="theme-color" content="#060F22">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Hub COSMART">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon-wrap">
+        <img src="cosmart-logo.png" alt="COSMART" class="cosmart-logo-img">
+      </div>
+    </div>
+    <div class="sidebar-hub-label">Calendario de contenidos</div>
+    <div class="sidebar-client">
+      <div class="client-logo-wrap" onclick="document.getElementById('client-logo-input').click()" title="Clic para subir el logo de tu empresa">
+        <img id="sb-client-logo" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
+        <div id="sb-client-logo-placeholder" class="client-logo-placeholder">
+          <span style="font-size:22px;line-height:1;color:rgba(255,255,255,.5);">+</span>
+        </div>
+        <div class="client-logo-upload-hint" style="font-size:11px;line-height:1;">+</div>
+      </div>
+      <input type="file" id="client-logo-input" accept="image/*" style="display:none;">
+      <input type="file" id="af-folder-input" webkitdirectory multiple style="display:none;">
+      <div id="sb-client-switcher-trigger" style="flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:6px;" title="Cambiar de cliente">
+        <div style="min-width:0;overflow:hidden;">
+          <strong id="sb-client-name" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Cargando...</strong>
+          <span id="sb-client-ig"></span>
+        </div>
+        <i id="sb-client-switcher-caret" data-lucide="chevron-down" style="display:none;width:13px;height:13px;stroke-width:2;color:rgba(255,255,255,.55);flex-shrink:0;"></i>
+      </div>
+      
+      <div id="sb-client-switcher-dropdown" class="hidden" style="position:absolute;top:100%;left:16px;right:16px;background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.35);max-height:340px;overflow-y:auto;z-index:200;padding:6px;"></div>
+    </div>
+    <nav class="nav-section">
+      <div class="nav-section-label">Navegación</div>
+      <button class="nav-item" data-section="dashboard">
+        <i data-lucide="bar-chart-2" class="nav-icon"></i><span>Dashboard</span>
+      </button>
+      <button class="nav-item active" data-section="contenidos">
+        <i data-lucide="pen-line" class="nav-icon"></i><span>Contenidos</span>
+      </button>
+      <button class="nav-item" data-section="guiones">
+        <i data-lucide="clapperboard" class="nav-icon"></i><span>Guiones</span>
+      </button>
+      <button class="nav-item" data-section="cuentas">
+        <i data-lucide="at-sign" class="nav-icon"></i><span>Mis cuentas</span>
+      </button>
+      <button class="nav-item" data-section="instrucciones">
+        <i data-lucide="circle-help" class="nav-icon"></i><span>Cómo se usa</span>
+      </button>
+    </nav>
+    <div class="sidebar-cosmart sb-upsell">
+      <div class="sidebar-cosmart-label">Más para tu negocio</div>
+      <div class="sidebar-puertos">
+        <a href="https://academy.vamatienda.com.ar/plata-en-orden/" target="_blank" rel="noopener" class="puerto-item"><i data-lucide="wallet" class="puerto-icon"></i><div><div class="puerto-name">Plata en Orden</div><div class="puerto-desc">Ordená tus finanzas de emprendedor</div></div></a>
+        <a href="https://www.cosmart.com.ar/productos-ganadores" target="_blank" rel="noopener" class="puerto-item"><i data-lucide="shopping-bag" class="puerto-icon"></i><div><div class="puerto-name">Productos Ganadores</div><div class="puerto-desc">Encontrá productos para vender online</div></div></a>
+        <a href="https://training.cosmart.com.ar/iaprincipiantes" target="_blank" rel="noopener" class="puerto-item"><i data-lucide="sparkles" class="puerto-icon"></i><div><div class="puerto-name">IA para Emprendedores</div><div class="puerto-desc">Usá la IA sin perder horas corrigiéndola</div></div></a>
+        <a href="https://training.cosmart.com.ar/contenidosrrss" target="_blank" rel="noopener" class="puerto-item"><i data-lucide="layout-template" class="puerto-icon"></i><div><div class="puerto-name">Estrategia de Contenido 2026/27</div><div class="puerto-desc">Formatos validados + IA</div></div></a>
+        <div class="puerto-item puerto-soon" aria-disabled="true"><i data-lucide="calendar-check" class="puerto-icon"></i><div><div class="puerto-name">Planner</div><div class="puerto-desc">Próximamente</div></div></div>
+      </div>
+      <a href="https://training.cosmart.com.ar/cursos/capacitacion-marketing/proximamente" target="_blank" rel="noopener" class="sb-curso">
+        <span class="sb-curso-top"><i data-lucide="graduation-cap"></i> Aprendé marketing</span>
+        <span class="sb-curso-sub">con Vane · Muy pronto</span>
+        <span class="sb-curso-btn">Sumarme a la lista de espera</span>
+      </a>
+      <div class="sb-firma">Hecho por Vaneh · COSMART</div>
+    </div>
+    <div class="sidebar-footer">
+      <button class="btn-logout" id="themeToggleBtn" onclick="cycleTheme()" style="margin-bottom:6px;display:flex;align-items:center;justify-content:center;gap:6px;">
+        <span id="themeToggleIconWrap"><i data-lucide="monitor" class="nav-icon"></i></span>
+        <span id="themeToggleLabel">Tema: Sistema</span>
+      </button>
+      <button class="btn-logout" id="logoutBtn">Cerrar sesión</button>
+    </div>
+  </aside>
+
+  <!-- Mobile sidebar overlay -->
+  <div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <button id="sidebar-toggle" class="sidebar-toggle-btn" aria-label="Menú">
+        <i data-lucide="menu" style="width:22px;height:22px;stroke-width:1.75;"></i>
+      </button>
+      <div>
+        <div class="topbar-title" id="topbar-title">Home</div>
+        <div class="topbar-sub" id="topbar-sub">Resumen del mes</div>
+      </div>
+      <div class="topbar-right" id="topbar-actions"></div>
+      <div class="notif-bell-wrap" style="display:none">
+        <button class="btn btn-secondary notif-bell-btn" id="notifBellBtn" onclick="toggleNotifDropdown()" title="Notificaciones">
+          <i data-lucide="bell" style="width:16px;height:16px;"></i>
+          <span class="notif-bell-badge hidden" id="notifBellBadge"></span>
+        </button>
+        <div class="notif-dropdown hidden" id="notifDropdown">
+          <div class="notif-dropdown-head">
+            <strong style="font-size:13px;">Notificaciones</strong>
+            <button class="btn btn-secondary btn-sm" onclick="marcarTodasNotifsLeidas()" style="font-size:11px;padding:4px 8px;">Marcar todas leídas</button>
+          </div>
+          <div id="notifList"></div>
+        </div>
+      </div>
+    </div>
+    <div class="content" id="main-content">
+      <div class="empty-state"><div class="empty-state-icon"><svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="#1A4DAA" stroke-width="1.5"/><polygon points="12,5 13.3,11.2 12,12 10.7,11.2" fill="#E02020"/><polygon points="12,19 13.3,12.8 12,12 10.7,12.8" fill="#1A4DAA"/><circle cx="12" cy="12" r="1" fill="#1A4DAA"/></svg></div><p>Cargando...</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- FAB -->
+<button id="fab-btn" class="fab-btn" style="display:none;" aria-label="Nuevo">
+  <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+</button>
+
+<!-- Bottom nav mobile -->
+<nav class="mobile-bottom-nav" id="mobile-bottom-nav">
+  <button class="bnav-btn" data-section="dashboard"><i data-lucide="bar-chart-2" style="width:20px;height:20px;stroke-width:1.75;"></i><span>Dashboard</span></button>
+  <button class="bnav-btn active" data-section="contenidos"><i data-lucide="pen-line" style="width:20px;height:20px;stroke-width:1.75;"></i><span>Contenidos</span></button>
+  <button class="bnav-btn" data-section="guiones"><i data-lucide="clapperboard" style="width:20px;height:20px;stroke-width:1.75;"></i><span>Guiones</span></button>
+  <button class="bnav-btn" data-section="cuentas"><i data-lucide="at-sign" style="width:20px;height:20px;stroke-width:1.75;"></i><span>Cuentas</span></button>
+  <button class="bnav-btn" id="bnav-more" style="display:none"><span>Más</span></button>
+</nav>
+
+<!-- Modal: Contenido (nuevo / editar) -->
+<div id="contenidoModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:720px;">
+    <div class="modal-header">
+      <h3 id="modal-cont-title" style="flex:1;">Nuevo contenido</h3>
+      <button class="btn btn-secondary btn-sm hidden" id="copyLinkContenidoBtn" title="Copiar link directo a este contenido">🔗 Copiar link</button>
+      <button class="modal-close" id="closeContenidoModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;">
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label>Título del contenido <span class="req-star">*</span></label>
+          <input type="text" id="cf-titulo" class="form-control" placeholder="Ej: Story 1 – Show La Rosalía">
+        </div>
+
+        <div class="form-group">
+          <label>Fecha de publicación</label>
+          <input type="date" id="cf-fecha" class="form-control">
+        </div>
+        <div class="form-group">
+          <label>Estado <span class="req-star">*</span></label>
+          <select id="cf-estado" class="form-control">
+            <option value="Idea">💡 Idea</option>
+            <option value="En proceso">✏️ En proceso</option>
+            <option value="En revisión">👁 En revisión</option>
+            <option value="Aprobado">✅ Aprobado</option>
+            <option value="Programado">📅 Programado</option>
+            <option value="Publicado">🚀 Publicado</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Cuenta <span class="req-star">*</span></label>
+          <select id="cf-cuenta" class="form-control">
+            <option value="">Seleccionar cuenta...</option>
+          </select>
+          <input type="text" id="cf-cuenta-custom" class="form-control" style="margin-top:5px;display:none;" placeholder="@cuenta">
+        </div>
+
+        <div class="form-group">
+          <label>Plataformas <span class="req-star">*</span></label>
+          <div class="check-group" id="plat-checks">
+            <label class="check-label"><input type="checkbox" value="Instagram" class="plat-check"> Instagram</label>
+            <label class="check-label"><input type="checkbox" value="Facebook" class="plat-check"> Facebook</label>
+            <label class="check-label"><input type="checkbox" value="LinkedIn" class="plat-check"> LinkedIn</label>
+            <label class="check-label"><input type="checkbox" value="Twitter / X" class="plat-check"> Twitter / X</label>
+            <label class="check-label"><input type="checkbox" value="TikTok" class="plat-check"> TikTok</label>
+            <label class="check-label"><input type="checkbox" value="YouTube" class="plat-check"> YouTube</label>
+            <label class="check-label"><input type="checkbox" value="Sitio Web" class="plat-check"> Sitio Web</label>
+            <label class="check-label"><input type="checkbox" value="Blog" class="plat-check"> Blog</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Ubicación</label>
+          <div class="check-group" id="ubic-dynamic">
+            <span style="font-size:11px;color:var(--text-muted);">Seleccioná plataforma primero</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Formato <span class="req-star">*</span></label>
+          <div class="check-group" id="formato-dynamic">
+            <span style="font-size:11px;color:var(--text-muted);">Seleccioná plataforma primero</span>
+          </div>
+        </div>
+
+      </div><!-- /form-grid essential -->
+
+      <!-- Toggle opciones avanzadas (solo mobile) -->
+      <button type="button" id="cont-advanced-toggle" class="advanced-toggle-btn" onclick="toggleContAdvanced()">
+        <i data-lucide="chevron-down" style="width:14px;height:14px;stroke-width:2;transition:transform .2s;"></i>
+        Ver más opciones
+      </button>
+
+      <div id="cont-advanced" class="form-grid advanced-section" style="grid-template-columns:1fr 1fr 1fr;">
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label style="font-family:'Playfair Display',serif;color:#1A4DAA;font-size:13px;font-weight:700;letter-spacing:.01em;">Dimensión / Relación de aspecto</label>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;">
+            <label class="check-label"><input type="checkbox" value="1:1" class="dim-check"> 1:1 – Cuadrado</label>
+            <label class="check-label"><input type="checkbox" value="4:5" class="dim-check"> 4:5 – Vertical</label>
+            <label class="check-label"><input type="checkbox" value="9:16" class="dim-check"> 9:16 – Stories / Reels</label>
+            <label class="check-label"><input type="checkbox" value="16:9" class="dim-check"> 16:9 – Horizontal / YouTube</label>
+            <label class="check-label"><input type="checkbox" value="1.91:1" class="dim-check"> 1.91:1 – Landscape Feed</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Eje de comunicación</label>
+          <select id="cf-eje" class="form-control">
+            <option>Institucional</option>
+            <option>Entretenimiento</option>
+            <option>Comercial</option>
+            <option>Interacción</option>
+            <option>Educativo</option>
+            <option>Inspiracional</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Tipo de contenido</label>
+          <select id="cf-tipo" class="form-control">
+            <option>Informativo</option>
+            <option>Promocional</option>
+            <option>Sorteo</option>
+            <option>Viral</option>
+            <option>Evento</option>
+            <option>Celebración</option>
+            <option>Tutorial</option>
+          </select>
+        </div>
+        <div class="form-group" id="cf-duracion-group" style="display:none;">
+          <label>Duración del video</label>
+          <input type="text" id="cf-duracion" class="form-control" placeholder="Ej: 30s, 1:15, 90s">
+          <span style="font-size:11px;color:var(--text-muted);">Reel/TikTok ≤ 90s · Story ≤ 60s · YouTube libre</span>
+        </div>
+        <div class="form-group">
+          <label>Objetivo</label>
+          <select id="cf-objetivo" class="form-control">
+            <option>Notoriedad</option>
+            <option>Engagement</option>
+            <option>Alcance</option>
+            <option>Conversión</option>
+            <option>Tráfico</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label style="font-family:'Playfair Display',serif;color:#1A4DAA;font-size:13px;font-weight:700;letter-spacing:.01em;">Copy (texto del posteo)</label>
+          <textarea id="cf-copy" class="form-control" rows="3" placeholder="El texto que va en la descripción/caption del posteo..."></textarea>
+        </div>
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label style="font-family:'Playfair Display',serif;color:#1A4DAA;font-size:13px;font-weight:700;letter-spacing:.01em;">Texto en pantalla</label>
+          <textarea id="cf-texto-pantalla" class="form-control" rows="3" placeholder="El texto que aparece escrito DENTRO de la pieza (imagen/video), no el copy..."></textarea>
+        </div>
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label style="font-family:'Playfair Display',serif;color:#1A4DAA;font-size:13px;font-weight:700;letter-spacing:.01em;">Prompt sugerido para IA</label>
+          <textarea id="cf-prompt-ia" class="form-control" rows="3" placeholder="Si esta pieza se va a generar con IA, el prompt sugerido para armarla..."></textarea>
+        </div>
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label style="font-family:'Playfair Display',serif;color:#1A4DAA;font-size:13px;font-weight:700;letter-spacing:.01em;">Sugerencia de pieza creativa (visual / secuencia)</label>
+          <textarea id="cf-sugerencia-visual" class="form-control" rows="3" placeholder="Cómo se imagina la pieza: descripción de la imagen, o secuencia de escenas/planos si es video (ej: plano 1: producto sobre mesa, plano 2: primer plano de la mano abriendo el envase...)"></textarea>
+        </div>
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label style="font-family:'Playfair Display',serif;color:#1A4DAA;font-size:13px;font-weight:700;letter-spacing:.01em;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <span>🎬 Guion</span>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="abrirTeleprompter()" style="font-size:11px;">📺 Abrir teleprompter</button>
+          </label>
+          <textarea id="cf-guion" class="form-control" rows="6" placeholder="El guion completo de la pieza, para leer mientras se graba. Se puede abrir en modo teleprompter (pantalla completa, fondo negro, letras blancas)..."></textarea>
+        </div>
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label style="font-family:'Playfair Display',serif;color:#1A4DAA;font-size:13px;font-weight:700;letter-spacing:.01em;">¿Es contenido para pauta?</label>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;padding:8px 0;">
+            <label class="check-label"><input type="radio" name="cf-pauta" value="organico" checked> Solo orgánico</label>
+            <label class="check-label"><input type="radio" name="cf-pauta" value="dark"> Sí – Dark post</label>
+            <label class="check-label"><input type="radio" name="cf-pauta" value="dark-organico"> Sí – Dark + orgánico</label>
+          </div>
+          <div id="pauta-hint" style="display:none;padding:8px 12px;background:#eff6ff;border-radius:6px;font-size:12px;color:var(--primary);margin-top:4px;">
+            💡 Este contenido va a pauta. <button type="button" onclick="document.getElementById('contenidoModal').classList.add('hidden');renderSection('pauta');" style="background:none;border:none;color:var(--accent);cursor:pointer;text-decoration:underline;font-size:12px;">Ir a campañas →</button>
+          </div>
+        </div>
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label>🎨 Pieza terminada / entrega final</label>
+          <div id="drive-links-list"></div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="addDriveLink('drive')">+ Agregar link</button>
+          <span style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;">Link de Drive, Dropbox, etc. del archivo listo para publicar</span>
+        </div>
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label>📁 Material de referencia / bruto</label>
+          <div id="ref-links-list"></div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="addDriveLink('ref')">+ Agregar link</button>
+          <span style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;">Fotos originales, material bruto o referencias de diseño</span>
+        </div>
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label>📎 Archivos adjuntos</label>
+          <div id="img-thumbnails" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+          <div id="img-paste-area" class="img-paste-area" style="cursor:default;">
+            <div class="img-paste-placeholder" style="justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <span style="display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12px;">
+                <i data-lucide="clipboard" style="width:15px;height:15px;opacity:.5;"></i>
+                <kbd style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:3px;padding:1px 5px;font-size:11px;">Ctrl+V</kbd> para pegar imagen · Imágenes, videos, PDF
+              </span>
+              <button type="button" onclick="document.getElementById('img-file-input').click()" class="btn btn-secondary btn-sm" style="font-size:11px;">📎 Subir archivo</button>
+            </div>
+            <p style="font-size:10px;color:#94a3b8;margin-top:4px;">Videos o archivos pesados → subí a Drive y pegá el link arriba. Límite sugerido: 50 MB.</p>
+            <input type="file" id="img-file-input" accept="image/*,video/*,.pdf,.doc,.docx" multiple style="display:none;">
+          </div>
+        </div>
+
+        <div class="form-group" style="grid-column:span 3;">
+          <label>Notas internas</label>
+          <input type="text" id="cf-notas" class="form-control" placeholder="Ej: Subir en hora pico, esperar confirmación cliente...">
+        </div>
+
+      </div><!-- /cont-advanced -->
+      <!-- Comentarios contenido -->
+      <div style="padding:14px 0 0;border-top:1px solid var(--border-strong);margin-top:4px;">
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:8px;"><i data-lucide="message-circle" class="ico ico-azul"></i> Comentarios</label>
+        <div id="cont-new-note" style="font-size:12px;color:var(--text-muted);padding:8px 12px;background:var(--surface);border-radius:6px;margin-bottom:8px;display:none;">Los comentarios estarán disponibles después de guardar el contenido.</div>
+        <div id="cont-comments-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;max-height:160px;overflow-y:auto;"></div>
+        <div id="cont-comment-input-wrap" style="position:relative;">
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="cont-comment-input" class="form-control" placeholder="Escribí un comentario..." style="flex:1;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addContenidoComment()">Comentar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="deleteContenidoBtn" style="margin-right:auto;">Eliminar</button>
+      <button class="btn btn-secondary btn-sm" id="archiveContenidoBtn" style="margin-right:8px;">Archivar</button>
+      <button class="btn btn-secondary" id="closeContenidoModal2">Cancelar</button>
+      <button class="btn btn-primary" id="saveContenidoBtn">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Guion (nuevo / editar), repositorio de Guiones -->
+<div id="guionModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:640px;">
+    <div class="modal-header">
+      <h3 id="modal-guion-title">Nuevo guion</h3>
+      <button class="modal-close" id="closeGuionModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Título</label>
+        <input type="text" id="gn-titulo" class="form-control" placeholder="Ej: 5 errores al armar tu perfil de LinkedIn">
+        <span style="font-size:11px;color:var(--text-muted);">Cuando crees el contenido con este mismo título, se vincula solo.</span>
+      </div>
+      <div class="form-group">
+        <label>Vincular a un contenido (opcional)</label>
+        <select id="gn-vinculo" class="form-control"></select>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span>Guion</span>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="abrirTeleprompterDesdeModalGuion()" style="font-size:11px;">📺 Abrir teleprompter</button>
+        </label>
+        <textarea id="gn-texto" class="form-control" rows="12" placeholder="El texto completo para leer mientras se graba..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="deleteGuionBtn" style="margin-right:auto;">Eliminar</button>
+      <button class="btn btn-secondary" onclick="document.getElementById('guionModal').classList.add('hidden')">Cancelar</button>
+      <button class="btn btn-primary" id="saveGuionBtn">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Traer guion desde un contenido existente -->
+<div id="traerGuionModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-header">
+      <h3>Traer guion desde un contenido</h3>
+      <button class="modal-close" id="closeTraerGuionModal">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text-muted);margin-top:0;">Contenidos que ya tienen un guion escrito. Al traerlo, queda copiado (y vinculado) en este repositorio.</p>
+      <div id="traer-guion-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('traerGuionModal').classList.add('hidden')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Importar contenidos desde Excel -->
+<div id="importContenidoModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:760px;">
+    <div class="modal-header">
+      <h3>Importar contenidos desde Excel</h3>
+      <button class="modal-close" id="closeImportModal">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-muted);margin:0 0 14px;line-height:1.5;">
+        Subí el calendario en Excel (misma plantilla base de siempre). El sistema identifica las columnas por su nombre — no importa el orden. Fila 1 = encabezados, no la toques. Si una fila ya existe (mismo título + cuenta) y algún campo cambió, se muestra el antes/después y podés elegir <strong>Reemplazar</strong> u <strong>Omitir</strong> por cada una — nunca se duplica.
+      </p>
+      <input type="file" id="import-file-input" accept=".xlsx,.xls" class="form-control">
+      <div id="import-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
+      <div id="import-preview" style="margin-top:14px;max-height:420px;overflow-y:auto;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="closeImportModal2">Cancelar</button>
+      <button class="btn btn-primary" id="confirmImportBtn" disabled>Importar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Actualización rápida de Estado/Notas/Comentario por Excel -->
+<div id="quickUpdateContenidoModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:760px;">
+    <div class="modal-header">
+      <h3>Actualizar estado/notas por Excel</h3>
+      <button class="modal-close" id="closeQuickUpdateModal">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-muted);margin:0 0 14px;line-height:1.5;">
+        Para actualizar varios contenidos ya cargados sin abrir uno por uno. Subí un Excel simple con columna <strong>Título del contenido</strong> (obligatoria, para encontrarlo) y las que quieras completar: <strong>Estado</strong>, <strong>Notas internas</strong>, <strong>Link pieza terminada</strong> y/o <strong>Comentario</strong> (si escribís @Nombre ahí, se manda el aviso por mail como cualquier mención). Solo se tocan esas columnas -- el resto del contenido (copy, formato, etc.) queda intacto, y una celda vacía no borra nada.
+      </p>
+      <input type="file" id="quick-update-file-input" accept=".xlsx,.xls" class="form-control">
+      <div id="quick-update-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
+      <div id="quick-update-preview" style="margin-top:14px;max-height:420px;overflow-y:auto;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="closeQuickUpdateModal2">Cancelar</button>
+      <button class="btn btn-primary" id="confirmQuickUpdateBtn" disabled>Actualizar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Detectar duplicados en Contenidos -->
+<div id="duplicadosContenidoModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:760px;">
+    <div class="modal-header">
+      <h3>Contenidos duplicados</h3>
+      <button class="modal-close" onclick="closeDuplicadosContenidoModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-muted);margin:0 0 14px;line-height:1.5;">
+        Agrupa los contenidos que tienen el mismo título -- puede ser un duplicado real (se cargó dos veces, por ejemplo antes de un arreglo del importador) o simplemente dos piezas distintas que coinciden en el título. Revisá cada grupo y tildá los que quieras eliminar; no se borra nada solo.
+      </p>
+      <div id="duplicados-lista"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeDuplicadosContenidoModal()">Cerrar</button>
+      <button class="btn btn-danger" id="confirmEliminarDuplicadosBtn" onclick="eliminarDuplicadosSeleccionados()" disabled>Eliminar seleccionados</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Tarea Sitio Web -->
+<div id="webTaskModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <h3>Tarea de Sitio Web</h3>
+      <button class="modal-close" id="closeWebTaskModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+        <div class="form-group" style="grid-column:span 2;">
+          <label>Descripción <span class="req-star">*</span></label>
+          <input type="text" id="wt-titulo" class="form-control" placeholder="Ej: Actualizar banner de home, arreglar formulario de contacto...">
+        </div>
+        <div class="form-group">
+          <label>Categoría</label>
+          <select id="wt-categoria" class="form-control">
+            <option>Contenido</option>
+            <option>Arreglo / Bug</option>
+            <option>Funcionalidad nueva</option>
+            <option>SEO / Métricas</option>
+            <option>Diseño</option>
+            <option>Otro</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Estado</label>
+          <select id="wt-estado" class="form-control">
+            <option>Pendiente</option>
+            <option>En proceso</option>
+            <option>En revisión</option>
+            <option>Listo</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Fecha límite</label>
+          <input type="date" id="wt-vencimiento" class="form-control">
+        </div>
+        <div class="form-group">
+          <label>URL de referencia</label>
+          <input type="url" id="wt-url" class="form-control" placeholder="https://...">
+        </div>
+        <div class="form-group" style="grid-column:span 2;">
+          <label>Notas</label>
+          <textarea id="wt-notas" class="form-control" rows="2" placeholder="Detalles, contexto, pantalla afectada..."></textarea>
+        </div>
+
+        <!-- Asignar -->
+        <div class="form-group" style="grid-column:span 2;">
+          <label>Asignar a</label>
+          <select id="wt-asignado" class="form-control">
+            <option value="">Sin asignar</option>
+          </select>
+        </div>
+
+        <!-- Subtareas -->
+        <div class="form-group" style="grid-column:span 2;">
+          <label>Subtareas</label>
+          <div id="wt-subtareas-list" style="margin-top:6px;display:flex;flex-direction:column;gap:6px;"></div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <input type="text" id="wt-subtarea-input" class="form-control" placeholder="Nueva subtarea..." style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();agregarSubtareaWt();}">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="agregarSubtareaWt()" style="flex-shrink:0;">+ Agregar</button>
+          </div>
+        </div>
+
+        <!-- Imágenes adjuntas -->
+        <div class="form-group" style="grid-column:span 2;">
+          <label><i data-lucide="image" class="ico ico-azul"></i> Imágenes adjuntas</label>
+          <div id="wt-img-thumbs" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+          <div id="wt-img-area" class="img-paste-area" style="cursor:default;">
+            <div class="img-paste-placeholder" style="justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <span style="display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12px;">
+                <i data-lucide="clipboard" style="width:15px;height:15px;opacity:.5;"></i>
+                Presioná <kbd style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:3px;padding:1px 5px;font-size:11px;">Ctrl+V</kbd> para pegar una imagen
+              </span>
+              <button type="button" onclick="document.getElementById('wt-img-input').click()" class="btn btn-secondary btn-sm" style="font-size:11px;">📎 Subir archivo</button>
+            </div>
+            <input type="file" id="wt-img-input" accept="image/*" multiple style="display:none;">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="deleteWebTaskBtn" style="margin-right:auto;display:none;">Eliminar</button>
+      <button class="btn btn-secondary" id="closeWebTaskModal2">Cancelar</button>
+      <button class="btn btn-primary" id="saveWebTaskBtn">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Reporte Ejecutivo -->
+<div id="reporteModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:860px;">
+    <div class="modal-header">
+      <h3>📊 Reporte Ejecutivo</h3>
+      <button class="modal-close" id="closeReporteModal">×</button>
+    </div>
+    <div class="modal-body" id="reporte-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="closeReporteModal2">Cerrar</button>
+      <button class="btn btn-primary" onclick="window.print()">🖨 Imprimir / Guardar PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Vista previa social -->
+<div id="previewModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:960px;">
+    <div class="modal-header">
+      <h3 id="preview-modal-title">Vista previa</h3>
+      <button class="modal-close" id="closePreviewModal">×</button>
+    </div>
+    <div class="modal-body" id="preview-modal-body"></div>
+  </div>
+</div>
+
+<!-- Modal: Tarea -->
+<div id="tareaModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:600px;">
+    <div class="modal-header">
+      <h3 id="tarea-modal-title" style="flex:1;">Nueva tarea</h3>
+      <button class="btn btn-secondary btn-sm hidden" id="copyLinkTareaBtn" title="Copiar link directo a esta tarea">🔗 Copiar link</button>
+      <button class="modal-close" id="closeTareaModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="tarea-borrador-aviso" style="display:none;align-items:center;gap:10px;background:#FFFBEB;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:#92400e;">
+        <span style="flex:1;">📝 Se restauró un borrador con cambios sin guardar de la última vez que abriste esta tarea.</span>
+        <button type="button" class="btn btn-secondary btn-sm" style="flex-shrink:0;">Descartar borrador</button>
+      </div>
+      <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+
+        <!-- Título -->
+        <div class="form-group" style="grid-column:span 2;">
+          <label>Título <span class="req-star">*</span></label>
+          <input type="text" id="tf-titulo" class="form-control" placeholder="¿Qué hay que hacer?">
+        </div>
+
+        <!-- Aviso de posible duplicado (solo al crear) -->
+        <div id="tf-dup-warning" style="display:none;grid-column:span 2;background:#FEF9C3;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#854d0e;"></div>
+
+        <!-- Estado + Prioridad -->
+        <div class="form-group">
+          <label>Estado</label>
+          <select id="tf-estado" class="form-control">
+            <option>Sin empezar</option>
+            <option>En progreso</option>
+            <option>Listo</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Prioridad</label>
+          <select id="tf-prioridad" class="form-control">
+            <option>Alta</option>
+            <option>Media</option>
+            <option>Baja</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>NIVEL DE IMPORTANCIA</label>
+          <select id="tf-cuadrante" class="form-control">
+            <option value="">Sin clasificar</option>
+            <option>Urgente e Importante</option>
+            <option>Importante pero no Urgente</option>
+            <option>Urgente pero no Importante</option>
+            <option>Ni Urgente ni Importante</option>
+          </select>
+        </div>
+
+        <!-- Fecha de inicio (solo proyectos) -->
+        <div class="form-group hidden" id="tf-fecha-inicio-group">
+          <label>Fecha de inicio</label>
+          <input type="date" id="tf-fecha-inicio" class="form-control">
+        </div>
+
+        <!-- Vencimiento + Recurrencia -->
+        <div class="form-group">
+          <label id="tf-vencimiento-label">Fecha de vencimiento</label>
+          <input type="date" id="tf-vencimiento" class="form-control">
+        </div>
+        <div class="form-group">
+          <label>Hora</label>
+          <input type="time" id="tf-hora" class="form-control">
+        </div>
+        <div class="form-group" style="grid-column:span 2;">
+          <label>🔁 Recurrencia</label>
+          <select id="tf-recurrencia" class="form-control">
+            <option value="">Sin repetición</option>
+            <option value="diaria">↻ Todos los días</option>
+            <option value="semanal">↻ Semanal</option>
+            <option value="quincenal">↻ Cada 15 días</option>
+            <option value="mensual">↻ Mensual</option>
+            <option value="anual">↻ Anual</option>
+            <option value="dias-semana">↻ Días específicos…</option>
+          </select>
+          <div id="tf-recurrencia-preview" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+        </div>
+
+        <!-- Días de la semana (mostrar solo si días-semana) -->
+        <div class="form-group" id="dias-semana-group" style="grid-column:span 2;display:none;">
+          <label>¿Qué días se repite?</label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;">
+            <label class="check-label"><input type="checkbox" value="1" class="dia-check"> Lunes</label>
+            <label class="check-label"><input type="checkbox" value="2" class="dia-check"> Martes</label>
+            <label class="check-label"><input type="checkbox" value="3" class="dia-check"> Miércoles</label>
+            <label class="check-label"><input type="checkbox" value="4" class="dia-check"> Jueves</label>
+            <label class="check-label"><input type="checkbox" value="5" class="dia-check"> Viernes</label>
+            <label class="check-label"><input type="checkbox" value="6" class="dia-check"> Sábado</label>
+            <label class="check-label"><input type="checkbox" value="0" class="dia-check"> Domingo</label>
+          </div>
+        </div>
+
+        <!-- Link de referencia -->
+        <div class="form-group" style="grid-column:span 2;">
+          <label>🔗 Link de referencia</label>
+          <input type="url" id="tf-link" class="form-control" placeholder="https://drive.google.com/... o cualquier URL">
+        </div>
+
+        <!-- Descripción / Notas con editor enriquecido -->
+        <div class="form-group" style="grid-column:span 2;">
+          <label>Descripción / Notas</label>
+          <div class="rte-toolbar" id="tf-notas-toolbar">
+            <button type="button" class="rte-btn" onclick="rteCmd('bold')" title="Negrita (Ctrl+B)"><b>B</b></button>
+            <button type="button" class="rte-btn" onclick="rteCmd('italic')" title="Cursiva (Ctrl+I)"><i>I</i></button>
+            <button type="button" class="rte-btn" onclick="rteCmd('underline')" title="Subrayado"><u>U</u></button>
+            <span class="rte-sep"></span>
+            <button type="button" class="rte-btn" onclick="rteCmd('insertUnorderedList')" title="Lista con viñetas">• Lista</button>
+            <button type="button" class="rte-btn" onclick="rteCmd('insertOrderedList')" title="Lista numerada">1. Lista</button>
+            <span class="rte-sep"></span>
+            <button type="button" class="rte-btn rte-color-btn" style="background:#E02020;" onclick="rteColor('#E02020')" title="Rojo"></button>
+            <button type="button" class="rte-btn rte-color-btn" style="background:#1A4DAA;" onclick="rteColor('#1A4DAA')" title="Azul"></button>
+            <button type="button" class="rte-btn rte-color-btn" style="background:#10b981;" onclick="rteColor('#10b981')" title="Verde"></button>
+            <button type="button" class="rte-btn rte-color-btn" style="background:#f59e0b;" onclick="rteColor('#f59e0b')" title="Naranja"></button>
+            <button type="button" class="rte-btn rte-color-btn" style="background:#0D2B6B;" onclick="rteColor('#0D2B6B')" title="Azul oscuro"></button>
+            <button type="button" class="rte-btn rte-color-btn" style="background:#64748b;" onclick="rteColor('#64748b')" title="Gris"></button>
+            <span class="rte-sep"></span>
+            <span class="rte-sep"></span>
+            <button type="button" class="rte-btn" onclick="rteCmd('h1')" title="Título H1" style="font-weight:700;font-size:12px;">H1</button>
+            <button type="button" class="rte-btn" onclick="rteCmd('h2')" title="Título H2" style="font-weight:700;font-size:11px;">H2</button>
+            <button type="button" class="rte-btn" onclick="rteCmd('h3')" title="Título H3" style="font-weight:700;font-size:10px;">H3</button>
+            <span class="rte-sep"></span>
+            <button type="button" class="rte-btn" onclick="rteCmd('removeFormat')" title="Limpiar formato" style="font-size:10px;">✕ fmt</button>
+          </div>
+          <div id="tf-notas"
+               class="form-control rte-editor"
+               contenteditable="true"
+               spellcheck="true"
+               data-placeholder="Describí la tarea, agregá bullets, colores, links..."></div>
+        </div>
+
+        <!-- Imágenes adjuntas -->
+        <div class="form-group" style="grid-column:span 2;">
+          <label>🖼 Imágenes adjuntas</label>
+          <div id="tarea-img-thumbs" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+          <div id="tarea-img-area" class="img-paste-area" style="cursor:default;">
+            <div class="img-paste-placeholder" style="justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <span style="display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12px;">
+                <i data-lucide="clipboard" style="width:15px;height:15px;opacity:.5;"></i>
+                Presioná <kbd style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:3px;padding:1px 5px;font-size:11px;">Ctrl+V</kbd> para pegar una imagen
+              </span>
+              <button type="button" onclick="document.getElementById('tarea-img-input').click()" class="btn btn-secondary btn-sm" style="font-size:11px;">📎 Subir archivo</button>
+            </div>
+            <input type="file" id="tarea-img-input" accept="image/*" multiple style="display:none;">
+          </div>
+        </div>
+
+        <!-- Archivos adjuntos -- se suben directo a "Links y Archivos", acá
+             solo queda un acceso directo (evita duplicar el mismo archivo
+             pegado en cada tarea, y queda centralizado para el cliente). -->
+        <div class="form-group" style="grid-column:span 2;">
+          <label>📎 Archivos adjuntos</label>
+          <div id="tarea-archivos-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+          <div id="tarea-archivo-folder-status" style="font-size:11px;color:var(--primary);margin-bottom:4px;"></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('tarea-archivo-input').click()">📎 Adjuntar archivo</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('tarea-archivo-folder-input').click()">📁⬆ Subir carpeta</button>
+          </div>
+          <input type="file" id="tarea-archivo-input" style="display:none;">
+          <input type="file" id="tarea-archivo-folder-input" webkitdirectory multiple style="display:none;">
+          <span style="font-size:11px;color:var(--text-muted);display:block;margin-top:4px;">Se guarda en "Links y Archivos" -- desde acá queda solo el acceso directo. Máximo 50 MB.</span>
+        </div>
+
+        <!-- Subtareas -->
+        <div class="form-group" style="grid-column:span 2;" id="subtareas-section">
+          <label>Subtareas</label>
+          <div id="subtareas-list" style="margin-top:6px;display:flex;flex-direction:column;gap:6px;"></div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <input type="text" id="st-titulo-input" class="form-control" placeholder="Nueva subtarea..." style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();agregarSubtareaInline();}">
+            <select id="st-asignado-input" class="form-control" style="max-width:150px;flex-shrink:0;"></select>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="agregarSubtareaInline()" style="flex-shrink:0;">+ Agregar</button>
+          </div>
+        </div>
+
+        <!-- Asignar -->
+        <div class="form-group" style="grid-column:span 2;">
+          <label>Asignar a</label>
+          <select id="tf-asignado" class="form-control">
+            <option value="">Sin asignar</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="grid-column:span 2;">
+          <label class="check-label" style="display:flex;align-items:center;gap:8px;font-weight:400;">
+            <input type="checkbox" id="tf-visible-cliente">
+            Visible para el cliente
+          </label>
+          <span style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;">Por defecto las tareas son internas del equipo COSMART. Tildá esto solo si el cliente tiene que verla.</span>
+        </div>
+
+        <div class="form-group" style="grid-column:span 2;">
+          <label class="check-label" style="display:flex;align-items:center;gap:8px;font-weight:400;">
+            <input type="checkbox" id="tf-es-proyecto" onchange="toggleTfEsProyecto()">
+            🔷 Es un proyecto
+          </label>
+          <span style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;">Se resalta en el tablero con una barra de progreso según las subtareas completadas.</span>
+        </div>
+
+        <!-- Visible para el equipo (permisos por tarea, 27/09) -->
+        <div class="form-group" style="grid-column:span 2;">
+          <label>Visible para el equipo</label>
+          <select id="tf-restr-modo" class="form-control" onchange="toggleTfRestrEspecificos()">
+            <option value="">Todo el equipo</option>
+            <option value="creador">🔒 Solo yo</option>
+            <option value="especificos">Colaboradores específicos…</option>
+          </select>
+          <div id="tf-restr-especificos" class="hidden" style="margin-top:8px;display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;max-height:140px;overflow-y:auto;"></div>
+          <span style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;">Por defecto la ve todo el equipo con acceso a este cliente. Restringila si es algo personal o de un proyecto puntual.</span>
+        </div>
+
+        <!-- Historial de cambios -->
+        <details id="tf-historial-group" style="grid-column:span 2;">
+          <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);">🕘 Historial</summary>
+          <div id="tf-historial-list" style="margin-top:8px;max-height:160px;overflow-y:auto;"></div>
+        </details>
+
+        <!-- Comentarios tarea -->
+        <div class="form-group" style="grid-column:span 2;border-top:1px solid var(--border-strong);padding-top:14px;margin-top:4px;">
+          <label style="margin-bottom:8px;display:block;">💬 Comentarios</label>
+          <div id="tarea-new-note" style="font-size:12px;color:var(--text-muted);padding:8px 12px;background:var(--surface);border-radius:6px;margin-bottom:8px;display:none;">Los comentarios estarán disponibles después de guardar la tarea.</div>
+          <div id="tarea-comments-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;max-height:140px;overflow-y:auto;"></div>
+          <div id="tarea-comment-input-wrap" style="position:relative;">
+            <div id="tarea-mention-list" class="mention-dropdown hidden" style="position:absolute;bottom:calc(100% + 4px);left:0;right:0;"></div>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="tarea-comment-input" class="form-control" placeholder="@usuario — escribí un comentario..." style="flex:1;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="addTareaComment()">Comentar</button>
+            </div>
+            <p id="tarea-mencion-status" style="font-size:11px;color:var(--text-muted);margin:4px 0 0;min-height:14px;"></p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="deleteTareaBtn" style="margin-right:auto;">Eliminar</button>
+      <button class="btn btn-secondary btn-sm" id="archiveTareaBtn" style="margin-right:8px;">Archivar</button>
+      <button class="btn btn-secondary" id="closeTareaModal2">Cancelar</button>
+      <button class="btn btn-primary" id="saveTareaBtn">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Idea -->
+<div id="ideaModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <h3 id="idea-modal-title">Nueva idea</h3>
+      <button class="modal-close" id="closeIdeaModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group span-2">
+          <label>Título *</label>
+          <input type="text" id="if-titulo" class="form-control" placeholder="¿De qué trata la idea?">
+        </div>
+        <div class="form-group">
+          <label>Formato</label>
+          <select id="if-formato" class="form-control">
+            <option>Imagen</option>
+            <option>Video</option>
+            <option>Reel</option>
+            <option>Carrusel</option>
+            <option>Story</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Plataformas</label>
+          <div style="display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;">
+            <label style="font-weight:400;font-size:13px;display:flex;gap:8px;align-items:center;"><input type="checkbox" value="Instagram" class="idea-plat-check"> Instagram</label>
+            <label style="font-weight:400;font-size:13px;display:flex;gap:8px;align-items:center;"><input type="checkbox" value="Facebook" class="idea-plat-check"> Facebook</label>
+            <label style="font-weight:400;font-size:13px;display:flex;gap:8px;align-items:center;"><input type="checkbox" value="LinkedIn" class="idea-plat-check"> LinkedIn</label>
+            <label style="font-weight:400;font-size:13px;display:flex;gap:8px;align-items:center;"><input type="checkbox" value="TikTok" class="idea-plat-check"> TikTok</label>
+          </div>
+        </div>
+        <div class="form-group span-2">
+          <label>Notas / descripción</label>
+          <textarea id="if-notas" class="form-control" rows="3" placeholder="Describí la idea, referencia, inspiración..."></textarea>
+        </div>
+        <div class="form-group span-2">
+          <label><i data-lucide="link" class="ico ico-azul"></i> Links de referencia</label>
+          <div id="idea-links-list"></div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="addDriveLink('idea')">+ Agregar link</button>
+          <span style="font-size:11px;color:var(--text-muted);display:block;margin-top:3px;">Pegá links de Instagram, TikTok u otros como referencia</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="closeIdeaModal2">Cancelar</button>
+      <button class="btn btn-primary" id="saveIdeaBtn">Guardar idea</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Campaña -->
+<div id="campanaModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-header">
+      <h3 id="campana-modal-title">Nueva campaña</h3>
+      <button class="modal-close" id="closeCampanaModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group span-2">
+          <label>Nombre *</label>
+          <input type="text" id="pf-nombre" class="form-control" placeholder="Ej: Campaña Awareness Q3">
+        </div>
+        <div class="form-group">
+          <label>Plataforma</label>
+          <select id="pf-plataforma" class="form-control">
+            <option>Meta Ads</option>
+            <option>Google Ads</option>
+            <option>TikTok Ads</option>
+            <option>LinkedIn Ads</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Estado</label>
+          <select id="pf-estado" class="form-control">
+            <option>Activa</option>
+            <option>Pausada</option>
+            <option>Finalizada</option>
+            <option>Borrador</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Asignar a</label>
+          <select id="pf-asignado" class="form-control">
+            <option value="">Sin asignar</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Presupuesto total ($)</label>
+          <input type="number" id="pf-presupuesto" class="form-control" placeholder="50000">
+        </div>
+        <div class="form-group">
+          <label>Gastado hasta hoy ($)</label>
+          <input type="number" id="pf-gastado" class="form-control" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Fecha inicio</label>
+          <input type="date" id="pf-inicio" class="form-control">
+        </div>
+        <div class="form-group">
+          <label>Fecha fin</label>
+          <input type="date" id="pf-fin" class="form-control">
+        </div>
+        <div class="form-group">
+          <label>Impresiones</label>
+          <input type="number" id="pf-impresiones" class="form-control" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Alcance</label>
+          <input type="number" id="pf-alcance" class="form-control" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Clics</label>
+          <input type="number" id="pf-clics" class="form-control" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>CPM ($)</label>
+          <input type="number" id="pf-cpm" class="form-control" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label>CPC ($) — costo por clic</label>
+          <input type="number" id="pf-cpc" class="form-control" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label>CTR (%) — tasa de clics</label>
+          <input type="number" id="pf-ctr" class="form-control" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label>Visitas en página de destino</label>
+          <input type="number" id="pf-visitas" class="form-control" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Conversiones</label>
+          <input type="number" id="pf-conversiones" class="form-control" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Ingresos generados ($)</label>
+          <input type="number" id="pf-ingresos" class="form-control" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label>ROAS — retorno sobre inversión</label>
+          <input type="number" id="pf-roas" class="form-control" step="0.01" placeholder="0.00" readonly style="background:#f8fafc;">
+          <span style="font-size:11px;color:var(--text-muted);margin-top:3px;">Se calcula automáticamente: Ingresos ÷ Gastado</span>
+        </div>
+        <div class="form-group">
+          <label>ROAS de equilibrio (break-even)</label>
+          <input type="number" id="pf-roas-eq" class="form-control" step="0.01" placeholder="Ej: 2.5">
+          <span style="font-size:11px;color:var(--text-muted);margin-top:3px;">¿A partir de qué ROAS la campaña es rentable?</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="deleteCampanaBtn" style="margin-right:auto;">Eliminar</button>
+      <button class="btn btn-secondary" id="closeCampanaModal2">Cancelar</button>
+      <button class="btn btn-primary" id="saveCampanaBtn">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Importar campañas desde Excel -->
+<div id="importCampanaModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:680px;">
+    <div class="modal-header">
+      <h3>Importar campañas desde Excel</h3>
+      <button class="modal-close" id="closeImportCampanaModal">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-muted);margin:0 0 14px;line-height:1.5;">
+        Subí el Excel de campañas de pauta. El sistema identifica las columnas por su nombre — no importa el orden. Fila 1 = encabezados, no la toques.
+      </p>
+      <input type="file" id="import-campana-file-input" accept=".xlsx,.xls" class="form-control">
+      <div id="import-campana-status" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
+      <div id="import-campana-preview" style="margin-top:14px;max-height:340px;overflow-y:auto;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="closeImportCampanaModal2">Cancelar</button>
+      <button class="btn btn-primary" id="confirmImportCampanaBtn" disabled>Importar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Agregar To-do -->
+<div id="todoModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-header">
+      <h3>+ Agregar tarea al día</h3>
+      <button class="modal-close" id="closeTodoModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Tarea *</label>
+        <input type="text" id="todo-text" class="form-control" placeholder="¿Qué hay que hacer?">
+      </div>
+      <div class="form-group">
+        <label>Fecha de vencimiento (opcional)</label>
+        <input type="date" id="todo-vencimiento" class="form-control">
+      </div>
+      <div class="form-group">
+        <label>Prioridad</label>
+        <select id="todo-prioridad" class="form-control">
+          <option>Media</option><option>Alta</option><option>Baja</option>
+        </select>
+      </div>
+      <p style="font-size:12px;color:var(--text-muted);margin-top:8px;">Esta tarea también aparecerá en el tablero Kanban de Tareas.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="closeTodoModal2">Cancelar</button>
+      <button class="btn btn-primary" id="saveTodoBtn">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Link -->
+<div id="linkModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h3 id="link-modal-title">Nuevo link</h3>
+      <button class="modal-close" id="closeLinkModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Título *</label>
+        <input type="text" id="lf-titulo" class="form-control" placeholder="Ej: Drive compartido, Canva, Notion...">
+      </div>
+      <div class="form-group">
+        <label>URL *</label>
+        <input type="url" id="lf-url" class="form-control" placeholder="https://...">
+      </div>
+      <div class="form-group">
+        <label>Descripción (opcional)</label>
+        <input type="text" id="lf-desc" class="form-control" placeholder="Ej: Carpeta de assets del cliente">
+      </div>
+      <div class="form-group">
+        <label>Categoría</label>
+        <input type="text" id="lf-categoria" class="form-control" placeholder="Ej: Drive, Diseño, Reportes..." list="lf-cat-list" autocomplete="off">
+        <datalist id="lf-cat-list"></datalist>
+        <span style="font-size:11px;color:var(--text-muted);">Escribí una categoría nueva o elegí una existente</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="deleteLinkBtn" style="margin-right:auto;display:none;">Eliminar</button>
+      <button class="btn btn-secondary" id="closeLinkModal2">Cancelar</button>
+      <button class="btn btn-primary" id="saveLinkBtn">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Archivo importante -->
+<div id="archivoModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h3 id="archivo-modal-title">Nuevo archivo</h3>
+      <button class="modal-close" id="closeArchivoModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group" id="af-modo-group">
+        <label>¿Cómo lo agregás?</label>
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="btn btn-primary" id="af-modo-link" style="flex:1;">🔗 Pegar link</button>
+          <button type="button" class="btn btn-secondary" id="af-modo-subir" style="flex:1;">📎 Subir archivo</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Título *</label>
+        <input type="text" id="af-titulo" class="form-control" placeholder="Ej: Manual de marca, Contrato, Briefing...">
+      </div>
+      <div class="form-group" id="af-url-group">
+        <label>URL *</label>
+        <input type="url" id="af-url" class="form-control" placeholder="https://...">
+      </div>
+      <div class="form-group hidden" id="af-file-group">
+        <label>Archivo *</label>
+        <input type="file" id="af-file-input" class="form-control">
+        <div id="af-file-name" style="font-size:12px;color:var(--primary);margin-top:6px;"></div>
+        <span style="font-size:11px;color:var(--text-muted);">Máximo 50 MB. Para archivos más pesados, usá "Pegar link" (Drive/Dropbox).</span>
+      </div>
+      <div class="form-group">
+        <label>Tipo</label>
+        <select id="af-tipo" class="form-control">
+          <option>Drive</option>
+          <option>Dropbox</option>
+          <option>PDF</option>
+          <option>Documento</option>
+          <option>Planilla</option>
+          <option>Otro</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Descripción (opcional)</label>
+        <input type="text" id="af-desc" class="form-control" placeholder="Ej: Versión actualizada agosto 2026">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="deleteArchivoBtn" style="margin-right:auto;display:none;">Eliminar</button>
+      <button class="btn btn-secondary" id="closeArchivoModal2">Cancelar</button>
+      <button class="btn btn-primary" id="saveArchivoBtn">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Cargar/actualizar Plan de ejecución -->
+<div id="planModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <h3>Cargar plan de ejecución</h3>
+      <button class="modal-close" id="closePlanModal">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-muted);margin:0 0 14px;line-height:1.5;">
+        Subí el archivo .html del plan (el mismo que se genera/exporta con el diseño ya armado). Reemplaza el plan anterior de este cliente si ya había uno.
+      </p>
+      <div class="form-group">
+        <label>Archivo HTML *</label>
+        <input type="file" id="plan-file-input" class="form-control" accept=".html,text/html">
+        <div id="plan-file-name" style="font-size:12px;color:var(--primary);margin-top:6px;"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="closePlanModal2">Cancelar</button>
+      <button class="btn btn-primary" id="planSaveBtn" disabled>Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div id="reporteMensualModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <h3>Subir reporte mensual</h3>
+      <button class="modal-close" id="closeReporteMensualModal">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-muted);margin:0 0 14px;line-height:1.5;">
+        Subí el archivo .html del reporte de ese mes. Si ya había un reporte cargado para el mismo mes, se reemplaza.
+      </p>
+      <div class="form-group">
+        <label>Mes *</label>
+        <input type="month" id="reporte-mes-input" class="form-control">
+      </div>
+      <div class="form-group">
+        <label>Archivo HTML *</label>
+        <input type="file" id="reporte-file-input" class="form-control" accept=".html,text/html">
+        <div id="reporte-file-name" style="font-size:12px;color:var(--primary);margin-top:6px;"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="closeReporteMensualModal2">Cancelar</button>
+      <button class="btn btn-primary" id="reporteSaveBtn" disabled>Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Cambio de contraseña obligatorio (primer login) -->
+<div id="mustChangePasswordModal" class="modal-overlay hidden" style="z-index:9999;">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h3>Creá tu contraseña</h3>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-muted);margin:0 0 16px;line-height:1.5;">
+        Por seguridad, antes de seguir tenés que cambiar la contraseña temporal que te llegó por mail.
+      </p>
+      <div class="form-group">
+        <label>Contraseña actual (la temporal)</label>
+        <input type="password" id="mcp-actual" class="form-control">
+      </div>
+      <div class="form-group">
+        <label>Contraseña nueva</label>
+        <input type="password" id="mcp-nueva" class="form-control">
+      </div>
+      <div class="form-group">
+        <label>Repetir contraseña nueva</label>
+        <input type="password" id="mcp-confirmar" class="form-control">
+      </div>
+      <div id="mcp-error" style="display:none;font-size:12px;color:#dc2626;margin-top:4px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" id="mcpSaveBtn" style="width:100%;justify-content:center;">Guardar y entrar</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+<script src="js/theme.js"></script>
+<!-- Modal: Gestión de equipo -->
+<div id="equipoModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-header">
+      <h3>👥 Equipo del cliente</h3>
+      <button class="modal-close" onclick="document.getElementById('equipoModal').classList.add('hidden')">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">
+        Agregá hasta <strong>5 miembros</strong> a tu equipo. Pueden ser mencionados con <strong>@nombre</strong> en comentarios y recibirán una notificación por email.
+      </p>
+      <div id="equipo-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;"></div>
+      <div style="border-top:1px solid var(--border-strong);padding-top:14px;">
+        <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:10px;">Agregar usuario</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:11px;">Nombre *</label>
+            <input type="text" id="eq-nombre" class="form-control" placeholder="Ej: Vaneh">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:11px;">Apellido</label>
+            <input type="text" id="eq-apellido" class="form-control" placeholder="Ej: Gómez">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:11px;">Email *</label>
+            <input type="email" id="eq-email" class="form-control" placeholder="usuario@email.com">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:11px;">Teléfono</label>
+            <input type="text" id="eq-telefono" class="form-control" placeholder="+54 9 11 ...">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:11px;">Rol</label>
+            <select id="eq-rol" class="form-control">
+              <option>Responsable COSMART</option>
+              <option>Cliente</option>
+              <option>Diseñador/a</option>
+              <option>Community Manager</option>
+              <option>Otro</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:11px;">Cargo</label>
+            <select id="eq-cargo" class="form-control">
+              <option value="">— Sin especificar —</option>
+              <option>Director/a</option>
+              <option>Gerente</option>
+              <option>Comercial</option>
+              <option>Diseñador/a</option>
+              <option>Responsable de Marketing</option>
+              <option>Community Manager</option>
+              <option>Administración</option>
+              <option>Otro</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:11px;">Instagram</label>
+            <input type="text" id="eq-instagram" class="form-control" placeholder="@usuario">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:11px;">LinkedIn</label>
+            <input type="text" id="eq-linkedin" class="form-control" placeholder="linkedin.com/in/...">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:11px;">TikTok</label>
+            <input type="text" id="eq-tiktok" class="form-control" placeholder="@usuario">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:11px;">Facebook</label>
+            <input type="text" id="eq-facebook" class="form-control" placeholder="facebook.com/...">
+          </div>
+        </div>
+        <button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="agregarUsuarioEquipo()">+ Agregar</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('equipoModal').classList.add('hidden')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: editar celda del borrador de Instagram -->
+<div id="borradorCeldaModal" class="modal-overlay hidden">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h3>Editar publicación</h3>
+      <button class="modal-close" onclick="document.getElementById('borradorCeldaModal').classList.add('hidden')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;justify-content:center;margin-bottom:16px;">
+        <div style="width:160px;aspect-ratio:4/5;position:relative;overflow:hidden;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.15);" id="bc-preview">
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>Imagen</label>
+        <input type="file" id="bc-file-input" accept="image/*" class="form-control">
+      </div>
+
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>O elegí un contenido ya cargado</label>
+        <select id="bc-contenido-select" class="form-control">
+          <option value="">-- Ninguno --</option>
+        </select>
+      </div>
+
+      <div style="border-top:1px solid var(--border-strong);padding-top:12px;margin-top:4px;">
+        <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px;">Portada de texto (si todavía no hay material)</p>
+        <div class="form-grid" style="grid-template-columns:1fr auto;gap:10px;margin-bottom:10px;">
+          <div class="form-group" style="margin:0;">
+            <label>Texto</label>
+            <input type="text" id="bc-texto" class="form-control" placeholder="Ej: Próximamente">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label>Color</label>
+            <input type="color" id="bc-color" style="width:44px;height:38px;border:1px solid var(--border);border-radius:8px;padding:2px;cursor:pointer;">
+          </div>
+        </div>
+      </div>
+
+      <label class="check-label" style="margin-top:4px;">
+        <input type="checkbox" id="bc-es-reel"> Marcar como Reel (aparece en la pestaña "Ver como Reel")
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="bc-quitar-btn" onclick="quitarCeldaBorrador()">Vaciar celda</button>
+      <button class="btn btn-secondary" onclick="document.getElementById('borradorCeldaModal').classList.add('hidden')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarCeldaBorrador()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Teleprompter (guion a pantalla completa, para grabar) -->
+<div id="teleprompterModal" class="hidden" style="position:fixed;inset:0;background:#000;z-index:10000;display:flex;flex-direction:column;">
+  <div style="display:flex;align-items:center;gap:14px;padding:10px 18px;background:#111;border-bottom:1px solid #333;flex-shrink:0;flex-wrap:wrap;">
+    <button type="button" onclick="cerrarTeleprompter()" style="background:none;border:1px solid #555;color:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;"><i data-lucide="x" class="ico ico-blanco"></i> Cerrar</button>
+    <button type="button" id="tp-play-btn" onclick="teleprompterTogglePlay()" style="background:#1A4DAA;border:none;color:#fff;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px;"><i data-lucide="play" class="ico ico-blanco"></i> Iniciar</button>
+    <label style="color:#ccc;font-size:12px;display:flex;align-items:center;gap:6px;">
+      Velocidad
+      <button type="button" onclick="teleprompterSpeed(-1)" aria-label="Más lento" style="background:#222;border:1px solid #555;color:#fff;border-radius:5px;width:30px;height:30px;cursor:pointer;font-size:16px;">−</button>
+      <span id="tp-speed-val" style="color:#fff;min-width:30px;text-align:center;font-weight:600;font-size:13px;">8.0</span>
+      <button type="button" onclick="teleprompterSpeed(1)" aria-label="Más rápido" style="background:#222;border:1px solid #555;color:#fff;border-radius:5px;width:30px;height:30px;cursor:pointer;font-size:16px;">+</button>
+    </label>
+    <label style="color:#ccc;font-size:12px;display:flex;align-items:center;gap:6px;">
+      Tamaño de letra
+      <button type="button" onclick="teleprompterFont(-2)" style="background:#222;border:1px solid #555;color:#fff;border-radius:5px;width:26px;height:26px;cursor:pointer;">−</button>
+      <button type="button" onclick="teleprompterFont(2)" style="background:#222;border:1px solid #555;color:#fff;border-radius:5px;width:26px;height:26px;cursor:pointer;">+</button>
+    </label>
+    <label style="color:#ccc;font-size:12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+      <select id="tp-preset-sel" onchange="teleprompterPresetElegir(this.value)" style="background:#222;border:1px solid #555;color:#fff;border-radius:5px;height:30px;max-width:190px;font-size:12px;"><option value="">Ajustes guardados…</option></select>
+      <button type="button" onclick="teleprompterPresetGuardar()" style="background:#222;border:1px solid #555;color:#fff;border-radius:5px;height:30px;padding:0 10px;cursor:pointer;font-size:12px;"><i data-lucide="save" class="ico ico-blanco"></i> Guardar</button>
+      <button type="button" onclick="teleprompterPresetBorrar()" aria-label="Borrar ajuste elegido" style="background:#222;border:1px solid #555;color:#fff;border-radius:5px;width:30px;height:30px;cursor:pointer;font-size:13px;"><i data-lucide="trash-2" class="ico ico-blanco"></i></button>
+    </label>
+    <button type="button" id="tp-fullscreen-btn" onclick="teleprompterToggleFullscreen()" style="background:#222;border:1px solid #555;color:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;"><i data-lucide="maximize" class="ico ico-blanco"></i> Pantalla completa</button>
+    <button type="button" id="tp-float-btn" onclick="teleprompterFloat()" style="background:#222;border:1px solid #555;color:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;"><i data-lucide="picture-in-picture-2" class="ico ico-blanco"></i> Modo flotante</button>
+    <label style="color:#ccc;font-size:12px;display:flex;align-items:center;gap:6px;margin-left:auto;">
+      <input type="checkbox" id="tp-mirror" onchange="teleprompterMirror()"> Espejado
+    </label>
+  </div>
+  <div id="tp-scroll" style="flex:1;overflow-y:auto;padding:60px 8vw 60vh;">
+    <div id="tp-text" style="color:#fff;font-size:42px;line-height:1.6;font-weight:600;white-space:pre-wrap;max-width:100%;font-family:'Segoe UI',Arial,sans-serif;text-align:center;"></div>
+  </div>
+</div>
+
+<script>
+  // Inicializar iconos Lucide después de que cargue el módulo
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.lucide) lucide.createIcons();
+  });
+</script>
+</body>
+</html>

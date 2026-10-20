@@ -1,0 +1,19 @@
+# COSMART Calendario
+
+> Aplicación de COSMART, creada por Vaneh, para organizar el calendario de contenidos de redes sociales: planificación por fecha, cuenta, red, formato y objetivo; ideas; guiones con teleprompter integrado; materiales y enlaces por contenido; estados; dashboard editorial y métricas cargadas manualmente.
+
+Para quién: emprendedores, creadores de contenido, community managers y agencias.
+
+## Qué hace
+- Calendario y banco de contenidos con estados (de idea a publicado).
+- Cada contenido reúne copy, texto en pantalla, referencias, enlaces a materiales, indicaciones creativas y prompts para IA (campo para guardar indicaciones).
+- Banco de ideas y guiones vinculados a contenidos, con teleprompter integrado.
+- Dashboard con distribución de contenidos y carga manual de métricas.
+- Modo claro y oscuro; plantilla, importación y exportación de Excel; varias cuentas y plataformas.
+
+## Qué no hace
+- No publica automáticamente en redes sociales ("Programado" es un estado de organización).
+
+## Enlaces
+- Landing: https://apps.cosmart.com.ar/calendario/
+- Descarga: https://apps.cosmart.com.ar/calendario/login.html?crear=1

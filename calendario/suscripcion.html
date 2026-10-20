@@ -124,7 +124,7 @@ async function montarPayPal() {
 
 function exito() {
   $('contenido').classList.add('oculto'); $('exito').classList.remove('oculto');
-  setTimeout(() => { location.href = 'index.html'; }, 1800);
+  setTimeout(() => { location.href = 'app.html'; }, 1800);
 }
 function elegirMedio(m) {
   medio = m;
@@ -142,7 +142,7 @@ function elegirPlan(p) {
   if (!getSessionToken()) { location.href = 'login.html'; return; }
   try { cuenta = await obtenerCuenta(); } catch (e) { $('cargando').textContent = e.message; return; }
   if (!cuenta) return;
-  if (cuenta.suscripcion.activo) { location.href = 'index.html'; return; }
+  if (cuenta.suscripcion.activo) { location.href = 'app.html'; return; }
   const previa = ['vencida', 'baja'].includes(cuenta.suscripcion.estado);
   $('aviso-prueba').classList.toggle('oculto', previa);
   $('aviso-vencida').classList.toggle('oculto', !previa);
