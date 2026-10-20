@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Elegí tu plan · Calendario de contenidos</title>
+  <link rel="icon" type="image/png" href="favicon-cosmart.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/auth.css">
+</head>
+<body>
+<main class="auth-wrap ancha">
+  <div class="auth-marca"><img src="cosmart-logo.png" alt="COSMART"><strong>Elegí tu plan</strong></div>
+  <div id="cargando" class="cargando">Cargando…</div>
+
+  <div id="contenido" class="oculto" style="display:flex;flex-direction:column;gap:16px;">
+    <div class="aviso" id="aviso-prueba">Tenés 7 días de prueba gratis. Ingresá tu tarjeta ahora y la suscripción empieza sola cuando termine la prueba. Cancelás cuando quieras.</div>
+    <div class="aviso suave oculto" id="aviso-vencida">Tu prueba terminó. Elegí un plan para seguir usando tu calendario. Tus datos están guardados.</div>
+
+    <section class="auth-card">
+      <div class="planes" id="planes">
+        <button type="button" class="plan" id="plan-mensual" aria-pressed="false"></button>
+        <button type="button" class="plan" id="plan-anual" aria-pressed="true"></button>
+      </div>
+
+      <div class="pago-tabs" role="tablist">
+        <button type="button" class="auth-tab" role="tab" id="tab-mp" aria-selected="true">Tarjeta</button>
+        <button type="button" class="auth-tab" role="tab" id="tab-pp" aria-selected="false">PayPal</button>
+      </div>
+      <p class="auth-sub" id="nota-pago"></p>
+      <div id="panel-mp"><div id="mp-brick"></div></div>
+      <div id="panel-pp" class="oculto"><div id="pp-botones"></div></div>
+      <div class="msg" id="msg" role="alert"></div>
+    </section>
+
+    <div class="pie"><span>Cancelás cuando quieras desde Mis cuentas.</span><button type="button" class="btn-lineal" id="salir">Cerrar sesión</button></div>
+  </div>
+
+  <div id="exito" class="auth-card oculto" style="text-align:center;">
+    <strong style="font-family:'Playfair Display',serif;font-size:20px;">¡Listo! Tu prueba empezó.</strong>
+    <p class="auth-sub">Te llevamos a tu calendario…</p>
+  </div>
+</main>
+
+<script src="https://sdk.mercadopago.com/js/v2"></script>
+<script type="module">
+import { obtenerCuenta, llamar, logoutUser, getSessionToken } from './js/auth.js';
+import { MP_PUBLIC_KEY, PAYPAL_CLIENT_ID } from './js/firebase.js';
+
+const $ = id => document.getElementById(id);
+const pesos = n => '$' + Math.round(n).toLocaleString('es-AR');
+const fecha = ms => new Date(ms).toLocaleDateString('es-AR', { day: 'numeric', month: 'long' });
+let cuenta = null, plan = 'anual', medio = 'mp', brick = null, ppListo = false;
+
+function msg(t, tipo = 'error') { const m = $('msg'); m.className = 'msg ' + tipo; m.textContent = t; }
+const precios = () => cuenta.suscripcion.precios;
+
+function pintarPlanes() {
+  const p = precios();
+  $('plan-mensual').innerHTML = `<div class="p-nombre">Mensual</div><div class="p-usd">USD ${p.mensual.usd} <small>por mes</small></div><div class="p-ars">Aprox. ${pesos(p.mensual.ars)} por mes al dólar de hoy</div>`;
+  const regalo = p.regaloVigente;
+  $('plan-anual').innerHTML = `<div class="p-nombre">Anual</div><div class="p-usd">USD ${p.anual.usd} <small>por año</small></div><div class="p-ars">Aprox. ${pesos(p.anual.ars)} por año al dólar de hoy</div>` +
+    (regalo ? `<span class="p-regalo">1 mes de regalo</span><div class="p-nota">Elegilo hasta el ${fecha(p.regaloVence)} y pagás 11 meses en vez de 12.</div>` : `<div class="p-nota">12 meses.</div>`);
+  $('plan-mensual').setAttribute('aria-pressed', plan === 'mensual');
+  $('plan-anual').setAttribute('aria-pressed', plan === 'anual');
+}
+function textoPago() {
+  $('nota-pago').textContent = medio === 'mp'
+    ? 'Pagás en pesos con Mercado Pago. Se cobra recién cuando terminan los 7 días de prueba.'
+    : 'Pagás en dólares con PayPal. Se cobra recién cuando terminan los 7 días de prueba.';
+}
+
+async function montarBrick() {
+  const cont = $('mp-brick'); cont.innerHTML = '';
+  if (brick) { try { await brick.unmount(); } catch (e) {} brick = null; }
+  if (!window.MercadoPago) { msg('No pudimos cargar Mercado Pago. Probá con PayPal o recargá la página.'); return; }
+  const mp = new MercadoPago(MP_PUBLIC_KEY, { locale: 'es-AR' });
+  const monto = precios()[plan].ars;
+  brick = await mp.bricks().create('cardPayment', 'mp-brick', {
+    initialization: { amount: monto },
+    customization: { paymentMethods: { maxInstallments: 1 } },
+    callbacks: {
+      onReady: () => {},
+      onError: e => { console.error(e); msg('Revisá los datos de la tarjeta.'); },
+      onSubmit: async formData => {
+        msg('');
+        try {
+          const ident = (formData.payer && formData.payer.identification) || {};
+          const r = await llamar('POST', '/api/apps/mp', { plan, cardToken: formData.token, docType: ident.type, docNumber: ident.number });
+          exito(r);
+        } catch (e) { msg(e.message); throw e; }
+      },
+    },
+  });
+}
+
+function cargarPayPal() {
+  return new Promise((ok, no) => {
+    if (window.paypal) return ok();
+    const s = document.createElement('script');
+    s.src = `https://www.paypal.com/sdk/js?client-id=${PAYPAL_CLIENT_ID}&vault=true&intent=subscription&currency=USD`;
+    s.onload = ok; s.onerror = () => no(new Error('No pudimos cargar PayPal.'));
+    document.head.appendChild(s);
+  });
+}
+async function montarPayPal() {
+  const cont = $('pp-botones'); cont.innerHTML = '';
+  try { await cargarPayPal(); } catch (e) { msg(e.message); return; }
+  paypal.Buttons({
+    style: { layout: 'vertical', shape: 'rect', label: 'subscribe' },
+    createSubscription: async (data, actions) => {
+      msg('');
+      const { planId } = await llamar('POST', '/api/apps/paypal-plan', { plan });
+      return actions.subscription.create({ plan_id: planId });
+    },
+    onApprove: async data => {
+      try { exito(await llamar('POST', '/api/apps/paypal', { subscriptionID: data.subscriptionID, plan })); }
+      catch (e) { msg(e.message); }
+    },
+    onError: () => msg('PayPal no pudo completar la operación. Probá de nuevo.'),
+  }).render('#pp-botones');
+}
+
+function exito() {
+  $('contenido').classList.add('oculto'); $('exito').classList.remove('oculto');
+  setTimeout(() => { location.href = 'index.html'; }, 1800);
+}
+function elegirMedio(m) {
+  medio = m;
+  $('tab-mp').setAttribute('aria-selected', m === 'mp'); $('tab-pp').setAttribute('aria-selected', m === 'pp');
+  $('panel-mp').classList.toggle('oculto', m !== 'mp'); $('panel-pp').classList.toggle('oculto', m !== 'pp');
+  textoPago(); msg('');
+  if (m === 'mp') montarBrick(); else montarPayPal();
+}
+function elegirPlan(p) {
+  plan = p; pintarPlanes(); msg('');
+  if (medio === 'mp') montarBrick();
+}
+
+(async () => {
+  if (!getSessionToken()) { location.href = 'login.html'; return; }
+  try { cuenta = await obtenerCuenta(); } catch (e) { $('cargando').textContent = e.message; return; }
+  if (!cuenta) return;
+  if (cuenta.suscripcion.activo) { location.href = 'index.html'; return; }
+  const previa = ['vencida', 'baja'].includes(cuenta.suscripcion.estado);
+  $('aviso-prueba').classList.toggle('oculto', previa);
+  $('aviso-vencida').classList.toggle('oculto', !previa);
+  $('cargando').classList.add('oculto'); $('contenido').classList.remove('oculto');
+  $('plan-mensual').onclick = () => elegirPlan('mensual');
+  $('plan-anual').onclick = () => elegirPlan('anual');
+  $('tab-mp').onclick = () => elegirMedio('mp');
+  $('tab-pp').onclick = () => elegirMedio('pp');
+  $('salir').onclick = logoutUser;
+  pintarPlanes(); textoPago();
+  const sdk = setInterval(() => { if (window.MercadoPago) { clearInterval(sdk); montarBrick().catch(e => msg(e.message)); } }, 150);
+  setTimeout(() => { clearInterval(sdk); if (!brick && medio === 'mp') montarBrick().catch(() => {}); }, 8000);
+})();
+</script>
+</body>
+</html>

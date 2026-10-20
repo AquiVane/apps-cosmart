@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Ingresar · Calendario de contenidos</title>
+  <link rel="icon" type="image/png" href="favicon-cosmart.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/auth.css">
+</head>
+<body>
+<main class="auth-wrap">
+  <div class="auth-marca"><img src="cosmart-logo.png" alt="COSMART"><strong>Calendario de contenidos</strong></div>
+  <p class="auth-sub">Organizá lo que publicás, guardá tus ideas y mirá cómo te va, todo en un solo lugar.</p>
+
+  <section class="auth-card" id="card-acceso">
+    <div class="auth-tabs" role="tablist">
+      <button type="button" class="auth-tab" role="tab" id="tab-ingresar" aria-selected="true">Ingresar</button>
+      <button type="button" class="auth-tab" role="tab" id="tab-crear" aria-selected="false">Crear cuenta</button>
+    </div>
+
+    <form id="form-ingresar" class="auth-card" style="border:none;padding:0;" novalidate>
+      <div class="campo"><label for="li-email">Mail</label><input type="email" id="li-email" autocomplete="email" inputmode="email" required></div>
+      <div class="campo"><label for="li-pass">Contraseña</label><input type="password" id="li-pass" autocomplete="current-password" required></div>
+      <button type="submit" class="btn-rojo" id="li-btn">Ingresar</button>
+      <button type="button" class="btn-lineal" id="ir-olvide">¿Olvidaste tu contraseña?</button>
+      <div class="msg" id="li-msg" role="alert"></div>
+    </form>
+
+    <form id="form-crear" class="auth-card oculto" style="border:none;padding:0;" novalidate>
+      <p class="auth-sub" style="margin:0;">Tus datos son solo tuyos. Nadie más los ve.</p>
+      <div class="campo"><label for="cr-nombre">Nombre</label><input type="text" id="cr-nombre" autocomplete="given-name" required></div>
+      <div class="campo"><label for="cr-email">Mail</label><input type="email" id="cr-email" autocomplete="email" inputmode="email" required></div>
+      <div class="campo"><label for="cr-pass">Contraseña (mínimo 8 caracteres)</label><input type="password" id="cr-pass" autocomplete="new-password" minlength="8" required></div>
+      <label class="check"><input type="checkbox" id="cr-ok"><span>Acepto los <a href="https://training.cosmart.com.ar/terminos" target="_blank" rel="noopener">términos</a> y la <a href="https://training.cosmart.com.ar/privacidad" target="_blank" rel="noopener">política de privacidad</a>.</span></label>
+      <button type="submit" class="btn-rojo" id="cr-btn">Crear mi cuenta</button>
+      <p class="auth-sub" style="margin:0;font-size:12.5px;">Después elegís tu plan: tenés 7 días de prueba gratis.</p>
+      <div class="msg" id="cr-msg" role="alert"></div>
+    </form>
+
+    <form id="form-olvide" class="auth-card oculto" style="border:none;padding:0;" novalidate>
+      <p class="auth-sub" style="margin:0;">Te mandamos un mail para elegir una contraseña nueva.</p>
+      <div class="campo"><label for="ol-email">Mail</label><input type="email" id="ol-email" autocomplete="email" inputmode="email" required></div>
+      <button type="submit" class="btn-rojo" id="ol-btn">Enviar mail</button>
+      <button type="button" class="btn-lineal" id="volver-ingresar">Volver a ingresar</button>
+      <div class="msg" id="ol-msg" role="status"></div>
+    </form>
+  </section>
+  <p class="auth-sub" style="font-size:12.5px;text-align:center;">Hecho por Vaneh · <a class="auth-link" href="https://cosmart.com.ar" target="_blank" rel="noopener">COSMART</a></p>
+</main>
+<script type="module">
+import { loginUser, registrarUsuario, pedirNuevaClave, getSessionToken, obtenerCuenta } from './js/auth.js';
+
+const $ = id => document.getElementById(id);
+const vista = v => {
+  $('form-ingresar').classList.toggle('oculto', v !== 'ingresar');
+  $('form-crear').classList.toggle('oculto', v !== 'crear');
+  $('form-olvide').classList.toggle('oculto', v !== 'olvide');
+  $('tab-ingresar').setAttribute('aria-selected', v === 'ingresar');
+  $('tab-crear').setAttribute('aria-selected', v === 'crear');
+};
+$('tab-ingresar').onclick = () => vista('ingresar');
+$('tab-crear').onclick = () => vista('crear');
+$('ir-olvide').onclick = () => { $('ol-email').value = $('li-email').value; vista('olvide'); };
+$('volver-ingresar').onclick = () => vista('ingresar');
+if (new URLSearchParams(location.search).get('crear') === '1') vista('crear');
+
+const irA = cuenta => { location.href = cuenta && cuenta.suscripcion && cuenta.suscripcion.activo ? 'index.html' : 'suscripcion.html'; };
+// Si ya tiene sesión, directo adonde corresponde
+if (getSessionToken()) obtenerCuenta().then(c => { if (c) irA(c); }).catch(() => {});
+
+async function enviar(form, btn, msg, accion) {
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    msg.className = 'msg'; msg.textContent = '';
+    btn.disabled = true; const txt = btn.textContent; btn.textContent = 'Un momento…';
+    try { await accion(); }
+    catch (err) { msg.className = 'msg error'; msg.textContent = err.message; }
+    finally { btn.disabled = false; btn.textContent = txt; }
+  });
+}
+enviar($('form-ingresar'), $('li-btn'), $('li-msg'), async () => {
+  const email = $('li-email').value.trim(), pass = $('li-pass').value;
+  if (!email || !pass) throw new Error('Completá tu mail y tu contraseña.');
+  irA(await loginUser(email, pass));
+});
+enviar($('form-crear'), $('cr-btn'), $('cr-msg'), async () => {
+  const nombre = $('cr-nombre').value.trim(), email = $('cr-email').value.trim(), pass = $('cr-pass').value;
+  if (!nombre || !email) throw new Error('Completá tu nombre y tu mail.');
+  if (pass.length < 8) throw new Error('La contraseña tiene que tener al menos 8 caracteres.');
+  if (!$('cr-ok').checked) throw new Error('Para crear tu cuenta, aceptá los términos y la política de privacidad.');
+  irA(await registrarUsuario({ nombre, email, password: pass }));
+});
+enviar($('form-olvide'), $('ol-btn'), $('ol-msg'), async () => {
+  const email = $('ol-email').value.trim();
+  if (!email) throw new Error('Escribí tu mail.');
+  const r = await pedirNuevaClave(email);
+  $('ol-msg').className = 'msg ok'; $('ol-msg').textContent = r.message || 'Si el mail tiene cuenta, te llega un link en unos minutos.';
+});
+</script>
+</body>
+</html>

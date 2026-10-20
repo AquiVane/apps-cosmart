@@ -1,0 +1,842 @@
+import { WORKER_URL, DEMO_MODE } from './firebase.js';
+import { getCurrentUser, getSessionToken, llamar, logoutUser } from './auth.js';
+
+// ── Worker API helper ─────────────────────────────────────────
+// Timeout duro de 20s: sin esto, un solo endpoint que se cuelgue del
+// lado del servidor deja el fetch esperando para siempre -- y como el
+// Hub pide varias cosas juntas con Promise.all, ESE Promise.all entero
+// nunca resuelve y toda la pantalla queda trabada en "Cargando..." sin
+// ningún error ni forma de reintentar.
+// En esta app cada persona tiene sus datos aislados en el backend (/api/apps/data/:tipo);
+// el servidor toma el mail de la SESIÓN. Lo que no existe en esta app (equipo, admin,
+// notificaciones...) se resuelve vacío, sin red.
+const RUTA_DATOS = /^\/data\/[^/]+\/([a-z0-9-]+)$/;
+async function api(method, path, body = null) {
+  const m = path.match(RUTA_DATOS);
+  if (!m) return method === 'GET' ? [] : { ok: true };
+  try {
+    return await llamar(method === 'GET' ? 'GET' : 'POST', `/api/apps/data/${m[1]}`, method === 'GET' ? null : body);
+  } catch (e) {
+    if (e.status === 401) { await logoutUser(); }
+    if (e.status === 402) { window.location.href = 'suscripcion.html'; }
+    throw e;
+  }
+}
+
+// ── Demo data ─────────────────────────────────────────────────
+function getDemoData(clientId) {
+  const key = `mh_data_${clientId}`;
+  const stored = localStorage.getItem(key);
+  if (stored) try { return JSON.parse(stored); } catch {}
+
+  const hoy = new Date();
+  const f = (d) => new Date(hoy.getFullYear(), hoy.getMonth(), d).toISOString().split('T')[0];
+
+  const defaultData = {
+    client: { id: clientId, name: clientId === 'slots' ? 'Slots!' : 'DOMO', instagram: `@${clientId}`, facebook: clientId },
+    prioridades: [
+      'Reporte trimestral RRSS',
+      'Activación de tracking',
+      'Pauta Publicitaria nuevas campañas',
+      'Sitio web – configuraciones',
+    ],
+    todos: [
+      { id: 1, text: 'Reunión individual Gerente-MKT', done: false },
+      { id: 2, text: 'Revisar encuesta mensual', done: true },
+      { id: 3, text: 'Automatizaciones pendientes', done: false },
+    ],
+    contenidos: [
+      { id: 'c1', titulo: 'Story 1: La Rosalía', plataformas: ['Instagram','Facebook'], ubicacion: 'Story', eje: 'Institucional', tipo: 'Informativo', estado: 'Publicado', cuenta: `@${clientId}`, formato: 'Story', objetivo: 'Notoriedad', linkDrive: '', notas: 'Subir en hora pico', fechaPub: f(1), copy: '' },
+      { id: 'c2', titulo: 'Story 2: La Rosalía', plataformas: ['Instagram','Facebook'], ubicacion: 'Story', eje: 'Institucional', tipo: 'Informativo', estado: 'Publicado', cuenta: `@${clientId}`, formato: 'Story', objetivo: 'Notoriedad', linkDrive: '', notas: '', fechaPub: f(3), copy: '' },
+      { id: 'c3', titulo: 'Reel Mensual Total de pagos', plataformas: ['Instagram','Facebook'], ubicacion: 'Feed', eje: 'Institucional', tipo: 'Informativo', estado: 'Aprobado', cuenta: `@${clientId}`, formato: 'Carrusel', objetivo: 'Engagement', linkDrive: '', notas: '', fechaPub: f(10), copy: 'Este mes cerramos con números increíbles 📊' },
+      { id: 'c4', titulo: 'Shows Musicales', plataformas: ['Instagram','Facebook'], ubicacion: 'Feed', eje: 'Entretenimiento', tipo: 'Promocional', estado: 'Idea', cuenta: `@${clientId}`, formato: 'Imagen', objetivo: 'Notoriedad', linkDrive: '', notas: '', fechaPub: f(15), copy: '' },
+      { id: 'c5', titulo: 'Sorteo especial', plataformas: ['Facebook'], ubicacion: 'Feed', eje: 'Interacción', tipo: 'Sorteo', estado: 'Idea', cuenta: `@${clientId}`, formato: 'Imagen', objetivo: 'Alcance', linkDrive: '', notas: '', fechaPub: f(18), copy: '¡Participá y ganá!' },
+      { id: 'c6', titulo: 'Post aniversario', plataformas: ['Instagram','Facebook'], ubicacion: 'Feed', eje: 'Institucional', tipo: 'Celebración', estado: 'En proceso', cuenta: `@${clientId}`, formato: 'Video', objetivo: 'Notoriedad', linkDrive: '', notas: 'Pedir diseño', fechaPub: f(20), copy: '' },
+      { id: 'c7', titulo: 'Promo gastronómica', plataformas: ['Instagram'], ubicacion: 'Story', eje: 'Comercial', tipo: 'Oferta', estado: 'En revisión', cuenta: `@${clientId}`, formato: 'Story', objetivo: 'Conversión', linkDrive: '', notas: '', fechaPub: f(22), copy: 'Menú especial solo por este mes 🍽️' },
+      { id: 'c8', titulo: 'CAC Challenge/trend', plataformas: ['Instagram'], ubicacion: 'Feed', eje: 'Entretenimiento', tipo: 'Viral', estado: 'Aprobado', cuenta: `@${clientId}`, formato: 'Reel', objetivo: 'Alcance', linkDrive: '', notas: '', fechaPub: f(25), copy: '' },
+      { id: 'c9', titulo: 'Evento VIP', plataformas: ['Instagram','Facebook'], ubicacion: 'Feed', eje: 'Institucional', tipo: 'Evento', estado: 'Programado', cuenta: `@${clientId}`, formato: 'Imagen', objetivo: 'Notoriedad', linkDrive: '', notas: '', fechaPub: f(28), copy: 'Te esperamos en una noche única ✨' },
+    ],
+    tareas: [
+      { id: 't1', titulo: 'Socio estratégico OTHON', estado: 'En progreso', notas: '', prioridad: 'Alta' },
+      { id: 't2', titulo: 'Optimización canales digitales', estado: 'Sin empezar', notas: '9 subtareas', prioridad: 'Media' },
+      { id: 't3', titulo: 'Email marketing', estado: 'Sin empezar', notas: '', prioridad: 'Media' },
+      { id: 't4', titulo: 'Verificación cuentas IG', estado: 'Sin empezar', notas: '3 pendientes', prioridad: 'Alta' },
+      { id: 't5', titulo: 'Deadlines planner outlook', estado: 'En progreso', notas: '', prioridad: 'Baja' },
+      { id: 't6', titulo: 'Activación digital conversiones: tracking', estado: 'En progreso', notas: '', prioridad: 'Alta' },
+      { id: 't7', titulo: 'Linkedin - Marca empleadora', estado: 'En progreso', notas: '', prioridad: 'Media' },
+      { id: 't8', titulo: 'Evento VIP Día del Amigo', estado: 'Listo', notas: '', prioridad: 'Alta' },
+      { id: 't9', titulo: 'Template PREMIOS', estado: 'Listo', notas: '', prioridad: 'Media' },
+      { id: 't10', titulo: 'Sitio web configuraciones', estado: 'Listo', notas: '', prioridad: 'Alta' },
+    ],
+    campanas: [
+      { id: 'p1', nombre: 'Campaña Awareness Q2', plataforma: 'Meta Ads', estado: 'Activa', presupuesto: 50000, gastado: 32400, impresiones: 125000, alcance: 89000, clics: 3200, cpm: 25.9, ctr: 2.56, fechaInicio: f(1), fechaFin: f(30) },
+      { id: 'p2', nombre: 'Retargeting Eventos', plataforma: 'Meta Ads', estado: 'Activa', presupuesto: 20000, gastado: 14800, impresiones: 45000, alcance: 22000, clics: 1800, cpm: 32.9, ctr: 4.0, fechaInicio: f(5), fechaFin: f(25) },
+      { id: 'p3', nombre: 'Tráfico Sitio Web', plataforma: 'Google Ads', estado: 'Pausada', presupuesto: 15000, gastado: 15000, impresiones: 67000, alcance: 67000, clics: 2100, cpm: 22.4, ctr: 3.13, fechaInicio: f(1), fechaFin: f(15) },
+    ],
+    metricas: {
+      seguidores_ig: 4820, crecimiento_ig: '+3.2%',
+      seguidores_fb: 12400, crecimiento_fb: '+1.1%',
+      alcance_mensual: 89000, tasa_engagement: '4.8%',
+      publicaciones: 22, impresiones: 210000,
+    },
+    ideas: [
+      { id: 'i1', titulo: 'Video invitación Show Oct', plataformas: ['Instagram','Facebook'], formato: 'Video', notas: 'Confirmar fecha', fechaCreacion: f(2) },
+      { id: 'i2', titulo: 'Cumpleaños cliente del mes', plataformas: ['Instagram'], formato: 'Story', notas: '', fechaCreacion: f(5) },
+      { id: 'i3', titulo: 'Pozos Millonarios – interacción', plataformas: ['Instagram'], formato: 'Imagen', notas: '', fechaCreacion: f(8) },
+    ],
+  };
+
+  localStorage.setItem(key, JSON.stringify(defaultData));
+  return defaultData;
+}
+
+function saveDemoData(clientId, data) {
+  localStorage.setItem(`mh_data_${clientId}`, JSON.stringify(data));
+}
+
+// ══════════════════════════════════════════════════════════════
+//  API pública — todas las funciones verifican DEMO_MODE
+// ══════════════════════════════════════════════════════════════
+
+export async function getClientData(clientId) {
+  if (DEMO_MODE) return { id: clientId, ...(getDemoData(clientId).client || {}) };
+  // '_cosmart'/'_personal' son pseudo-clientes internos (Gestión COSMART,
+  // Mis Tareas, y ahora Contenidos/Pauta propios de la agencia) -- nunca
+  // están en la lista real de clientes (`_clients`), así que pedir su
+  // `clientinfo` da 404. No hace falta el dato real, alcanza con un
+  // objeto mínimo.
+  if (clientId === '_cosmart' || clientId === '_personal') return { id: clientId };
+  // Admins usan /admin/clients (lista completa); clientes usan su propio endpoint
+  const user = JSON.parse(localStorage.getItem('mh_user') || '{}');
+  if (user.role === 'admin') {
+    const clients = await api('GET', '/admin/clients');
+    return clients.find(c => c.id === clientId) || { id: clientId };
+  }
+  return api('GET', `/data/${clientId}/clientinfo`);
+}
+
+// ── Contenidos ────────────────────────────────────────────────
+
+export async function getContenidos(clientId) {
+  if (DEMO_MODE) return getDemoData(clientId).contenidos;
+  return api('GET', `/data/${clientId}/contenidos`);
+}
+
+// `knownList` es opcional: si quien llama ya tiene la lista completa y
+// actualizada en memoria (caso normal -- el caché local siempre refleja
+// lo último guardado), se salta el GET previo y ahorra un round-trip
+// completo -- guardar pasaba a sentirse lento (~1-2seg) por hacer
+// SIEMPRE "traer todo + reescribir todo" aunque ya se tuviera la lista.
+export async function saveContenido(clientId, contenido, knownList) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    const idx = data.contenidos.findIndex(c => c.id === contenido.id);
+    if (idx >= 0) data.contenidos[idx] = contenido;
+    else { contenido.id = 'c' + Date.now(); data.contenidos.push(contenido); }
+    saveDemoData(clientId, data);
+    return contenido;
+  }
+  const list = knownList ? [...knownList] : await api('GET', `/data/${clientId}/contenidos`);
+  const idx = list.findIndex(c => c.id === contenido.id);
+  if (idx >= 0) list[idx] = contenido;
+  else { contenido.id = 'c' + Date.now(); list.push(contenido); }
+  await api('POST', `/data/${clientId}/contenidos`, list);
+  return contenido;
+}
+
+export async function saveContenidosBulk(clientId, contenidos) {
+  const withIds = contenidos.map((c, i) => ({ ...c, id: 'c' + Date.now() + '_' + i }));
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    data.contenidos.push(...withIds);
+    saveDemoData(clientId, data);
+    return withIds;
+  }
+  const list = await api('GET', `/data/${clientId}/contenidos`);
+  list.push(...withIds);
+  await api('POST', `/data/${clientId}/contenidos`, list);
+  return withIds;
+}
+
+// Actualiza contenidos EXISTENTES de una (usado por la importación de
+// Excel cuando detecta que una fila ya existe y cambió algo) -- un solo
+// GET + POST para todo el lote, en vez de una vuelta al servidor por
+// contenido como haría llamar a saveContenido() en loop.
+export async function updateContenidosBulk(clientId, actualizaciones) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    actualizaciones.forEach(u => {
+      const idx = data.contenidos.findIndex(c => c.id === u.id);
+      if (idx >= 0) data.contenidos[idx] = { ...data.contenidos[idx], ...u };
+    });
+    saveDemoData(clientId, data);
+    return data.contenidos.filter(c => actualizaciones.some(u => u.id === c.id));
+  }
+  const list = await api('GET', `/data/${clientId}/contenidos`);
+  actualizaciones.forEach(u => {
+    const idx = list.findIndex(c => c.id === u.id);
+    if (idx >= 0) list[idx] = { ...list[idx], ...u };
+  });
+  await api('POST', `/data/${clientId}/contenidos`, list);
+  return list.filter(c => actualizaciones.some(u => u.id === c.id));
+}
+
+export async function deleteContenido(clientId, id, knownList) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    data.contenidos = data.contenidos.filter(c => c.id !== id);
+    saveDemoData(clientId, data);
+    return;
+  }
+  const list = knownList ? [...knownList] : await api('GET', `/data/${clientId}/contenidos`);
+  await api('POST', `/data/${clientId}/contenidos`, list.filter(c => c.id !== id));
+}
+
+// ── Guiones (repositorio propio, vinculado o no a un contenido) ──
+
+export async function getGuiones(clientId) {
+  if (DEMO_MODE) return getDemoData(clientId).guiones || [];
+  return api('GET', `/data/${clientId}/guiones`);
+}
+
+export async function saveGuion(clientId, guion, knownList) {
+  if (DEMO_MODE) { const dd = getDemoData(clientId); dd.guiones = dd.guiones || []; guion.id = guion.id || 'g' + Date.now(); const i = dd.guiones.findIndex(g => g.id === guion.id); if (i >= 0) dd.guiones[i] = guion; else dd.guiones.push(guion); saveDemoData(clientId, dd); return guion; }
+  const list = knownList ? [...knownList] : await api('GET', `/data/${clientId}/guiones`);
+  const idx = list.findIndex(g => g.id === guion.id);
+  if (idx >= 0) list[idx] = guion;
+  else { guion.id = 'g' + Date.now(); list.push(guion); }
+  await api('POST', `/data/${clientId}/guiones`, list);
+  return guion;
+}
+
+export async function deleteGuion(clientId, id, knownList) {
+  if (DEMO_MODE) { const dd = getDemoData(clientId); dd.guiones = (dd.guiones || []).filter(g => g.id !== id); saveDemoData(clientId, dd); return; }
+  const list = knownList ? [...knownList] : await api('GET', `/data/${clientId}/guiones`);
+  await api('POST', `/data/${clientId}/guiones`, list.filter(g => g.id !== id));
+}
+
+// ── Procesos ──────────────────────────────────────────────────
+
+export async function getProcesos(clientId) {
+  if (DEMO_MODE) return [];
+  return api('GET', `/data/${clientId}/procesos`);
+}
+
+export async function saveProcesos(clientId, lista) {
+  if (DEMO_MODE) return;
+  await api('POST', `/data/${clientId}/procesos`, lista);
+}
+
+// ── Recursos (plantillas/archivos de referencia para todo el equipo) ──
+export async function getRecursos(clientId) {
+  if (DEMO_MODE) return [];
+  const r = await api('GET', `/data/${clientId}/recursos`);
+  return Array.isArray(r) ? r : [];
+}
+
+export async function saveRecursos(clientId, lista) {
+  if (DEMO_MODE) return;
+  await api('POST', `/data/${clientId}/recursos`, lista);
+}
+
+// ── Tareas ────────────────────────────────────────────────────
+
+export async function getTareas(clientId) {
+  if (DEMO_MODE) return getDemoData(clientId).tareas;
+  return api('GET', `/data/${clientId}/tareas`);
+}
+
+export async function saveTarea(clientId, tarea, knownList) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    const idx = data.tareas.findIndex(t => t.id === tarea.id);
+    if (idx >= 0) data.tareas[idx] = tarea;
+    else { tarea.id = 't' + Date.now(); data.tareas.push(tarea); }
+    saveDemoData(clientId, data);
+    return tarea;
+  }
+  const list = knownList ? [...knownList] : await api('GET', `/data/${clientId}/tareas`);
+  const idx = list.findIndex(t => t.id === tarea.id);
+  if (idx >= 0) list[idx] = tarea;
+  else { tarea.id = 't' + Date.now(); list.push(tarea); }
+  await api('POST', `/data/${clientId}/tareas`, list);
+  return tarea;
+}
+
+export async function saveTareasList(clientId, list) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    data.tareas = list;
+    saveDemoData(clientId, data);
+    return;
+  }
+  await api('POST', `/data/${clientId}/tareas`, list);
+}
+
+export async function deleteTarea(clientId, id, knownList) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    data.tareas = data.tareas.filter(t => t.id !== id);
+    saveDemoData(clientId, data);
+    return;
+  }
+  const list = knownList ? [...knownList] : await api('GET', `/data/${clientId}/tareas`);
+  await api('POST', `/data/${clientId}/tareas`, list.filter(t => t.id !== id));
+}
+
+// ── Campañas ──────────────────────────────────────────────────
+
+export async function getCampanas(clientId) {
+  if (DEMO_MODE) return getDemoData(clientId).campanas;
+  return api('GET', `/data/${clientId}/campanas`);
+}
+
+export async function saveCampana(clientId, campana) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    const idx = data.campanas.findIndex(c => c.id === campana.id);
+    if (idx >= 0) data.campanas[idx] = campana;
+    else { campana.id = 'p' + Date.now(); data.campanas.push(campana); }
+    saveDemoData(clientId, data);
+    return campana;
+  }
+  const list = await api('GET', `/data/${clientId}/campanas`);
+  const idx = list.findIndex(c => c.id === campana.id);
+  if (idx >= 0) list[idx] = campana;
+  else { campana.id = 'p' + Date.now(); list.push(campana); }
+  await api('POST', `/data/${clientId}/campanas`, list);
+  return campana;
+}
+
+export async function saveCampanasBulk(clientId, campanas) {
+  const withIds = campanas.map((c, i) => ({ ...c, id: 'p' + Date.now() + '_' + i }));
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    data.campanas.push(...withIds);
+    saveDemoData(clientId, data);
+    return withIds;
+  }
+  const list = await api('GET', `/data/${clientId}/campanas`);
+  list.push(...withIds);
+  await api('POST', `/data/${clientId}/campanas`, list);
+  return withIds;
+}
+
+// ── Métricas ──────────────────────────────────────────────────
+
+export async function getMetricas(clientId) {
+  if (DEMO_MODE) return getDemoData(clientId).metricas;
+  return api('GET', `/data/${clientId}/metricas`);
+}
+
+// ── Home (prioridades + to-do) ────────────────────────────────
+
+export async function getHomeData(clientId) {
+  if (DEMO_MODE) {
+    const d = getDemoData(clientId);
+    return { prioridades: d.prioridades||[], todos: d.todos||[], links: d.links||[], webTareas: d.webTareas||[], logoEmpresa: d.logoEmpresa||'' };
+  }
+  const home = (await api('GET', `/data/${clientId}/home`)) || {};
+  return {
+    prioridades: home.prioridades || [],
+    todos: home.todos || [],
+    links: home.links || [],
+    webTareas: home.webTareas || [],
+    archivos: home.archivos || [],
+    logoEmpresa: home.logoEmpresa || ''
+  };
+}
+
+export async function saveHomeData(clientId, homeObj) {
+  const { prioridades=[], todos=[], links=[], webTareas=[], archivos=[], logoEmpresa='' } = homeObj || {};
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    data.prioridades = prioridades;
+    data.todos = todos;
+    data.links = links;
+    data.webTareas = webTareas;
+    data.archivos = archivos;
+    data.logoEmpresa = logoEmpresa;
+    saveDemoData(clientId, data);
+    return;
+  }
+  await api('POST', `/data/${clientId}/home`, { prioridades, todos, links, webTareas, archivos, logoEmpresa });
+}
+
+// ── Plan de ejecución (página privada por cliente) ─────────────
+
+export async function getPlan(clientId) {
+  if (DEMO_MODE) return { html: '' };
+  const plan = await api('GET', `/data/${clientId}/plan`);
+  return (plan && plan.html) ? plan : { html: '' };
+}
+
+export async function savePlan(clientId, html) {
+  if (DEMO_MODE) { alert('En modo demo no se puede guardar el plan real.'); return; }
+  return api('POST', `/data/${clientId}/plan`, { html });
+}
+
+// ── Reportes mensuales (uno por mes, el cliente navega entre meses) ──
+// El índice (mes + fecha de subida, SIN el html) se carga siempre al
+// entrar al Hub, para saber si mostrar el nav y qué meses hay. El html de
+// cada mes (puede ser pesado -- un reporte exportado con estilos/gráficos)
+// se pide aparte, solo cuando de verdad se quiere ver o reemplazar ese
+// mes -- si no, cargar el Hub entero se ponía lento a medida que se
+// acumulan meses.
+
+export async function getReportesIndice(clientId) {
+  if (DEMO_MODE) return [];
+  const indice = await api('GET', `/data/${clientId}/reportes`);
+  return Array.isArray(indice) ? indice : [];
+}
+
+export async function saveReportesIndice(clientId, indice) {
+  if (DEMO_MODE) { alert('En modo demo no se pueden guardar reportes reales.'); return; }
+  return api('POST', `/data/${clientId}/reportes`, indice);
+}
+
+export async function getReporteHtml(clientId, mes) {
+  if (DEMO_MODE) return '';
+  const r = await api('GET', `/data/${clientId}/reporte-${mes}`);
+  return (r && r.html) || '';
+}
+
+export async function saveReporteHtml(clientId, mes, html) {
+  if (DEMO_MODE) { alert('En modo demo no se pueden guardar reportes reales.'); return; }
+  return api('POST', `/data/${clientId}/reporte-${mes}`, { html });
+}
+
+// ── Borrador de grilla de Instagram (pendiente de aprobación) ────
+// Pedido de Vaneh (13/09). Se carga aparte de loadAllData() -- recién
+// cuando se entra a esta pestaña puntual, no en la carga general del
+// Hub -- porque puede traer imágenes pesadas (portadas armadas a mano)
+// y "no puede tardar más de 1 segundo en cargar" el resto del panel.
+export async function getFeedBorrador(clientId) {
+  if (DEMO_MODE) return { celdas: [], colorMarca: '#111111' };
+  const r = await api('GET', `/data/${clientId}/feed-borrador`);
+  return (r && Array.isArray(r.celdas)) ? r : { celdas: [], colorMarca: '#111111' };
+}
+
+export async function saveFeedBorrador(clientId, borrador) {
+  if (DEMO_MODE) { alert('En modo demo no se puede guardar el borrador real.'); return; }
+  return api('POST', `/data/${clientId}/feed-borrador`, borrador);
+}
+
+// ── Archivos subidos (R2) ────────────────────────────────────
+
+export async function uploadArchivo(clientId, file) {
+  throw new Error('Subir archivos no está disponible en esta app. Pegá el link del archivo (Drive, Dropbox, etc.).');
+}
+export async function _uploadArchivoHub(clientId, file) {
+  if (DEMO_MODE) { alert('En modo demo no se pueden subir archivos reales.'); throw new Error('Modo demo'); }
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch(`${WORKER_URL}/archivo-upload/${encodeURIComponent(clientId)}`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${getSessionToken()}` },
+    body: fd,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Error al subir el archivo');
+  return data;
+}
+
+export async function abrirArchivo(clientId, key, filename) {
+  // La pestaña se abre ACÁ, antes del await -- todavía dentro del mismo
+  // gesto de click del usuario. Si se abre recién después de esperar el
+  // fetch, el navegador ya no lo asocia a ningún click y el popup queda
+  // bloqueado en silencio (sin avisar nada) -- eso era el bug real de
+  // "no abre al tocar abrir".
+  const win = window.open('', '_blank');
+  const res = await fetch(`${WORKER_URL}/archivo-file/${encodeURIComponent(clientId)}/${encodeURIComponent(key)}`, {
+    headers: { 'Authorization': `Bearer ${getSessionToken()}` },
+  });
+  if (!res.ok) {
+    win?.close();
+    throw new Error('No se pudo descargar el archivo');
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  if (win && !win.closed) {
+    win.location.href = url;
+  } else {
+    const a = document.createElement('a');
+    a.href = url; a.download = filename || 'archivo';
+    a.click();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// Para mostrar inline (miniatura o lightbox) un archivo subido a R2 --
+// a diferencia de abrirArchivo() no abre pestaña ni descarga, solo
+// devuelve una URL de blob usable en un <img src>. El endpoint necesita
+// el Authorization header, así que no se puede apuntar un <img> directo
+// a /archivo-file/... -- hay que traerlo como blob primero.
+export async function getArchivoBlobUrl(clientId, key) {
+  const res = await fetch(`${WORKER_URL}/archivo-file/${encodeURIComponent(clientId)}/${encodeURIComponent(key)}`, {
+    headers: { 'Authorization': `Bearer ${getSessionToken()}` },
+  });
+  if (!res.ok) throw new Error('No se pudo cargar la imagen');
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+// ── Ideas ─────────────────────────────────────────────────────
+
+export async function getIdeas(clientId) {
+  if (DEMO_MODE) return getDemoData(clientId).ideas;
+  return api('GET', `/data/${clientId}/ideas`);
+}
+
+export async function saveIdea(clientId, idea, knownList) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    const idx = data.ideas.findIndex(i => i.id === idea.id);
+    if (idx >= 0) data.ideas[idx] = idea;
+    else { idea.id = 'i' + Date.now(); data.ideas.push(idea); }
+    saveDemoData(clientId, data);
+    return idea;
+  }
+  const list = knownList ? [...knownList] : await api('GET', `/data/${clientId}/ideas`);
+  const idx = list.findIndex(i => i.id === idea.id);
+  if (idx >= 0) list[idx] = idea;
+  else { idea.id = 'i' + Date.now(); list.push(idea); }
+  await api('POST', `/data/${clientId}/ideas`, list);
+  return idea;
+}
+
+export async function deleteIdea(clientId, id, knownList) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    data.ideas = data.ideas.filter(i => i.id !== id);
+    saveDemoData(clientId, data);
+    return;
+  }
+  const list = knownList ? [...knownList] : await api('GET', `/data/${clientId}/ideas`);
+  await api('POST', `/data/${clientId}/ideas`, list.filter(i => i.id !== id));
+}
+
+export async function deleteCampana(clientId, id) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    data.campanas = data.campanas.filter(c => c.id !== id);
+    saveDemoData(clientId, data);
+    return;
+  }
+  const list = await api('GET', `/data/${clientId}/campanas`);
+  await api('POST', `/data/${clientId}/campanas`, list.filter(c => c.id !== id));
+}
+
+export async function saveMetricasData(clientId, metricas) {
+  if (DEMO_MODE) {
+    const data = getDemoData(clientId);
+    data.metricas = metricas;
+    saveDemoData(clientId, data);
+    return;
+  }
+  await api('POST', `/data/${clientId}/metricas`, metricas);
+}
+
+// ── Admin ─────────────────────────────────────────────────────
+
+export async function getAllClients() {
+  if (DEMO_MODE) {
+    return [
+      { id: 'slots', nombre: 'Slots!', email: 'slots@demo.com', instagram: '@wildeslots', activo: true },
+      { id: 'domo',  nombre: 'DOMO',   email: 'domo@demo.com',  instagram: '@domobsa',    activo: true },
+    ];
+  }
+  return api('GET', '/admin/clients');
+}
+
+export async function reorderClients(orden) {
+  if (DEMO_MODE) return;
+  return api('POST', '/admin/clients/reorder', { orden });
+}
+
+export async function createClient(clientData) {
+  if (DEMO_MODE) {
+    alert('Para crear clientes reales configurá el worker primero (editá js/firebase.js con la URL).');
+    return;
+  }
+  return api('POST', '/admin/clients', clientData);
+}
+
+export async function createColaborador(data) {
+  if (DEMO_MODE) {
+    alert('Para crear colaboradores reales configurá el worker primero (editá js/firebase.js con la URL).');
+    return;
+  }
+  return api('POST', '/admin/colaboradores', data);
+}
+
+export async function getColaboradores() {
+  if (DEMO_MODE) return [];
+  return api('GET', '/admin/colaboradores');
+}
+
+// Equipo completo (admin + colaboradores) -- a diferencia de getColaboradores()
+// (admin-only), esta la puede llamar cualquiera del equipo. Se usa para
+// poblar los selectores de "asignar a"/@menciones en tareas internas, donde
+// un colaborador también necesita ver al admin en la lista.
+export async function getEquipo() {
+  if (DEMO_MODE) return [];
+  return api('GET', '/admin/equipo');
+}
+
+export async function updateColaborador(email, updates) {
+  if (DEMO_MODE) { alert('En modo demo no se pueden editar colaboradores reales.'); return; }
+  return api('PATCH', `/admin/colaboradores/${encodeURIComponent(email)}`, updates);
+}
+
+export async function deleteColaborador(email) {
+  if (DEMO_MODE) { alert('En modo demo no se pueden eliminar colaboradores reales.'); return; }
+  return api('DELETE', `/admin/colaboradores/${encodeURIComponent(email)}`);
+}
+
+export async function getInformes() {
+  if (DEMO_MODE) return [];
+  return api('GET', '/admin/informes');
+}
+
+export async function aprobarInforme(id) {
+  if (DEMO_MODE) { alert('En modo demo no se pueden aprobar informes reales.'); return; }
+  return api('POST', `/admin/informes/${encodeURIComponent(id)}/aprobar`);
+}
+
+export async function desaprobarInforme(id) {
+  if (DEMO_MODE) { alert('En modo demo no se pueden desaprobar informes reales.'); return; }
+  return api('POST', `/admin/informes/${encodeURIComponent(id)}/desaprobar`);
+}
+
+export async function eliminarInforme(id) {
+  if (DEMO_MODE) { alert('En modo demo no se pueden eliminar informes reales.'); return; }
+  return api('DELETE', `/admin/informes/${encodeURIComponent(id)}`);
+}
+
+export async function generarInformesManual(mes, anio, clientId) {
+  if (DEMO_MODE) { alert('En modo demo no se pueden generar informes reales.'); return { generados: 0 }; }
+  return api('POST', '/admin/informes/generar', { mes, anio, clientId });
+}
+
+export async function previewResumenEquipo(dias = 30) {
+  if (DEMO_MODE) return { desde: '', hasta: '', tituloPeriodo: '', resumenes: [] };
+  return api('GET', `/admin/resumen-equipo/preview?dias=${dias}`);
+}
+
+export async function enviarResumenEquipoManual(dias = 30) {
+  if (DEMO_MODE) { alert('En modo demo no se puede enviar el resumen real.'); return { enviados: 0 }; }
+  return api('POST', '/admin/resumen-equipo/enviar', { dias });
+}
+
+export async function getEmailStats(dias = 30) {
+  if (DEMO_MODE) return { desde: '', hasta: '', porCampana: [], demografiaEuforia: null };
+  return api('GET', `/admin/email-stats?dias=${dias}`);
+}
+
+// Proxy a la config de la campaña "Marketing + IA de 0 a 100" (Training) --
+// el Hub reenvía server-to-server con su propio secret, nunca expone la
+// clave de cosmart-training-core al browser. Solo COSMART.
+export async function getEmkConfig() {
+  if (DEMO_MODE) return { activo: false, dryRun: true, venta: true, ediciones: [] };
+  return api('GET', '/admin/emk-config');
+}
+export async function setEmkConfig(parcial) {
+  if (DEMO_MODE) return { ok: true };
+  return api('PUT', '/admin/emk-config', parcial);
+}
+
+export async function saveClientData(clientId, data) {
+  const actual = (await api('GET', `/data/${clientId}/clientinfo`)) || {};
+  const nuevo = { ...actual, ...data };
+  await api('POST', `/data/${clientId}/clientinfo`, nuevo);
+  return nuevo;
+}
+export async function _saveClientDataHub(clientId, data) {
+  if (DEMO_MODE) {
+    const demo = getDemoData(clientId);
+    demo.client = { ...demo.client, ...data };
+    saveDemoData(clientId, demo);
+    return demo.client;
+  }
+  return api('POST', `/admin/clients/${clientId}`, data);
+}
+
+// ── Agencias (multi-tenant, solo super-admin COSMART) ───────────
+
+export async function getAgencias() {
+  if (DEMO_MODE) return [];
+  return api('GET', '/superadmin/agencias');
+}
+
+export async function updateAgencia(agencyId, updates) {
+  if (DEMO_MODE) return;
+  return api('POST', `/superadmin/agencias/${agencyId}`, updates);
+}
+
+export async function getPrecioMP() {
+  if (DEMO_MODE) return { mensualARS: 0, anualARS: 0 };
+  return api('GET', '/superadmin/precio-mp');
+}
+
+export async function setPrecioMP(mensualARS, anualARS, porColaboradorARS) {
+  if (DEMO_MODE) return;
+  return api('POST', '/superadmin/precio-mp', { mensualARS, anualARS, porColaboradorARS });
+}
+
+// ── Asistente Claude (propio de cada agencia) ────────────────────
+export async function getClaudeConfig() {
+  if (DEMO_MODE) return { configurada: false };
+  return api('GET', '/admin/claude-config');
+}
+
+export async function setClaudeApiKey(apiKey) {
+  if (DEMO_MODE) { alert('En modo demo no se puede guardar la clave real.'); return { configurada: false }; }
+  return api('POST', '/admin/claude-config', { apiKey });
+}
+
+// Verticales/proyectos propios de una agencia (COSMART incluida desde el
+// 28/09) -- ver comentario en el worker (handleGetVerticales/handleSetVerticales).
+export async function getVerticalesAgencia() {
+  if (DEMO_MODE) return [];
+  const r = await api('GET', '/admin/verticales');
+  return r?.verticales || [];
+}
+
+export async function setVerticalesAgencia(verticales) {
+  if (DEMO_MODE) return { verticales: [] };
+  return api('POST', '/admin/verticales', { verticales });
+}
+
+// ── Notificaciones push (29/09) ──────────────────────────────────────
+export async function suscribirPush(subscription) {
+  if (DEMO_MODE) return { ok: true };
+  return api('POST', '/push/subscribe', subscription);
+}
+
+export async function desuscribirPush() {
+  if (DEMO_MODE) return { ok: true };
+  return api('POST', '/push/unsubscribe', {});
+}
+
+export async function probarPush() {
+  if (DEMO_MODE) return { ok: true };
+  return api('POST', '/push/test', {});
+}
+
+// ── Integración ChatGPT (solo lectura, clave propia -- ver worker) ──
+export async function getIntegracionesChatGPT() {
+  if (DEMO_MODE) return { integraciones: [] };
+  return api('GET', '/admin/integraciones/chatgpt');
+}
+
+export async function crearIntegracionChatGPT(nombre) {
+  if (DEMO_MODE) { alert('En modo demo no se puede crear una clave real.'); return null; }
+  return api('POST', '/admin/integraciones/chatgpt', { nombre });
+}
+
+export async function revocarIntegracionChatGPT(id) {
+  if (DEMO_MODE) return { ok: true };
+  return api('DELETE', `/admin/integraciones/chatgpt/${encodeURIComponent(id)}`);
+}
+
+export async function preguntarClaude(mensaje, historial, incluirDatos) {
+  if (DEMO_MODE) return { respuesta: 'En modo demo el asistente no está conectado.' };
+  return api('POST', '/ai/preguntar', { mensaje, historial, incluirDatos });
+}
+
+// ── Cuentas publicitarias propias de la agencia (Meta/Google/TikTok/LinkedIn) ──
+export async function getCuentasPubAgencia() {
+  if (DEMO_MODE) return {};
+  return api('GET', '/admin/cuentas-publicitarias');
+}
+
+export async function setCuentasPubAgencia(cuentas) {
+  if (DEMO_MODE) return { ok: true };
+  return api('POST', '/admin/cuentas-publicitarias', cuentas);
+}
+
+// ── Webhook saliente hacia el CRM propio de la agencia ────────────
+export async function getWebhookConfig() {
+  if (DEMO_MODE) return { webhookUrl: '' };
+  return api('GET', '/admin/webhook-config');
+}
+
+export async function setWebhookConfig(webhookUrl) {
+  if (DEMO_MODE) return { ok: true };
+  return api('POST', '/admin/webhook-config', { webhookUrl });
+}
+
+// ── CRM de leads potenciales ───────────────────────────────────────
+export async function getLeads() {
+  if (DEMO_MODE) return [];
+  return api('GET', '/admin/leads');
+}
+
+// ── Panel de ventas (VAMA Academy / Training, 11/10) ──────────────
+export async function getVentasPanel(mes) {
+  if (DEMO_MODE) return { ok: true, mes, ventas: [] };
+  return api('GET', `/admin/ventas-panel?mes=${encodeURIComponent(mes)}`);
+}
+export async function getVentasPanelMeses() {
+  if (DEMO_MODE) return { ok: true, meses: [] };
+  return api('GET', '/admin/ventas-panel/meses');
+}
+export async function getVentasPanelConfig(vertical, mes) {
+  if (DEMO_MODE) return { meta: 30, gastoAnuncios: 0, retencionMP: 0 };
+  return api('GET', `/admin/ventas-panel/config?vertical=${encodeURIComponent(vertical)}&mes=${encodeURIComponent(mes)}`);
+}
+export async function setVentasPanelConfig(vertical, mes, parcial) {
+  if (DEMO_MODE) return { ok: true };
+  return api('PUT', `/admin/ventas-panel/config?vertical=${encodeURIComponent(vertical)}&mes=${encodeURIComponent(mes)}`, parcial);
+}
+
+export async function saveLead(lead) {
+  if (DEMO_MODE) return { ok: true };
+  return api('POST', '/admin/leads', lead);
+}
+
+export async function deleteLead(id) {
+  if (DEMO_MODE) return { ok: true };
+  return api('DELETE', `/admin/leads/${id}`);
+}
+
+// ── Notificaciones (campanita) ─────────────────────────────────────
+export async function getNotificaciones() {
+  if (DEMO_MODE) return [];
+  return api('GET', '/notificaciones');
+}
+
+// body: { leida?, oculta?, estado? } -- `estado` además actualiza el
+// ítem real (tarea o contenido) vinculado a la notificación, ver
+// handleActualizarNotificacion en el worker.
+export async function actualizarNotificacion(id, body) {
+  if (DEMO_MODE) return { ok: true };
+  return api('POST', `/notificaciones/${id}`, body);
+}
+
+// Marca TODAS las notificaciones propias como leídas en un solo pedido
+// atómico -- ver handleMarcarTodasLeidas en el worker (antes esto se
+// hacía con un POST por notificación en paralelo y se pisaban entre sí).
+export async function marcarTodasNotifsLeidasApi() {
+  if (DEMO_MODE) return { ok: true };
+  return api('POST', '/notificaciones/marcar-todas');
+}
+
+// ── Chat interno de equipo (grupal + DMs) ───────────────────────────
+// `conversacionId`: 'equipo' (grupal) o 'dm:<email1>|<email2>' (ver
+// construirDmIdChat en admin/index.html, mismo cálculo que el backend).
+export async function getChatMensajes(conversacionId) {
+  if (DEMO_MODE) return [];
+  return api('GET', `/chat/mensajes/${encodeURIComponent(conversacionId)}`);
+}
+
+export async function enviarMensajeChat(conversacionId, texto) {
+  if (DEMO_MODE) return { ok: true };
+  return api('POST', `/chat/mensajes/${encodeURIComponent(conversacionId)}`, { texto });
+}
+
+export async function getChatNoLeidos() {
+  if (DEMO_MODE) return { total: 0, porConversacion: {} };
+  return api('GET', '/chat/no-leidos');
+}

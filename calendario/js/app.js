@@ -1,0 +1,8113 @@
+import { requireAuth, logoutUser, changePassword, obtenerCuenta, llamar } from './auth.js';
+import { montarPlay, detenerPlay, armarNarracionReporte, armarNarracionDashboard } from './play.js';
+import {
+  getClientData, saveClientData, getContenidos, saveContenido, deleteContenido, saveContenidosBulk, updateContenidosBulk,
+  getGuiones, saveGuion, deleteGuion,
+  getTareas, saveTarea, deleteTarea,
+  getCampanas, saveCampana, deleteCampana, saveCampanasBulk,
+  getMetricas, saveMetricasData, getHomeData, saveHomeData,
+  getIdeas, saveIdea, deleteIdea,
+  getPlan, savePlan,
+  getReportesIndice, saveReportesIndice, getReporteHtml, saveReporteHtml,
+  getFeedBorrador, saveFeedBorrador,
+  uploadArchivo, abrirArchivo, getArchivoBlobUrl, getAllClients, getEquipo,
+  getNotificaciones, actualizarNotificacion,
+} from './data.js';
+
+// ── Helpers de texto ────────────────────────────────────
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+// Convierte URLs sueltas en <a> clickeables. Funciona tanto sobre texto
+// plano ya escapado como sobre HTML del editor de notas -- no vuelve a
+// envolver algo que ya está dentro de un <a>.
+function linkify(html) {
+  if (!html) return '';
+  return html.replace(/(<a\b[^>]*>[\s\S]*?<\/a>)|((?:https?:\/\/|www\.)[^\s<>"']+)/gi, (m, alreadyLink, url) => {
+    if (alreadyLink) return alreadyLink;
+    const clean = url.replace(/[.,;:!?)\]]+$/, '');
+    const trail = url.slice(clean.length);
+    const href = clean.startsWith('http') ? clean : 'https://' + clean;
+    return `<a href="${href}" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:underline;">${clean}</a>${trail}`;
+  });
+}
+
+// Link directo a un contenido/tarea puntual -- pedido de Vaneh (13/09):
+// "así si la tengo que pasar por whatsapp la encuentran rápido con tan
+// solo un click". Abre el Hub, entra al cliente correcto y abre el modal
+// de ese item solo -- ver el manejo de ?open=/&id= en init().
+window.copiarLinkItem = function (tipo, id) {
+  const url = `${location.origin}${location.pathname}?client=${encodeURIComponent(clientId)}&open=${tipo}&id=${encodeURIComponent(id)}`;
+  navigator.clipboard.writeText(url).then(() => alert('Link copiado -- al abrirlo entra directo a esto.'));
+};
+
+// Textarea de una línea que crece hacia abajo solo, para reemplazar
+// <input> en campos editables de texto largo (ej. título de subtarea) --
+// un <input> nunca hace wrap, así que un título largo quedaba cortado y
+// no se veía. La misma <textarea> sirve para el placeholder de "3
+// puntitos, agregar" en cualquier lugar que la reuse.
+function autoGrowTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+window.autoGrowTextarea = autoGrowTextarea;
+
+// ── Recorrido guiado (primer login del cliente) ──────────────────
+// Mismo motor que el del panel admin (duplicado a propósito -- son
+// scripts separados, uno por página). Guardado en localStorage, por
+// navegador, no por cuenta.
+function iniciarTour(steps, storageKey) {
+  if (localStorage.getItem(storageKey)) return;
+  let i = 0;
+  const overlay = document.createElement('div');
+  overlay.id = 'tour-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;';
+  document.body.appendChild(overlay);
+  function cerrar() { overlay.remove(); try { localStorage.setItem(storageKey, '1'); } catch (e) {} }
+  function render() {
+    const step = steps[i];
+    const el = step.selector ? document.querySelector(step.selector) : null;
+    overlay.innerHTML = '';
+    let rect = el ? el.getBoundingClientRect() : { top: window.innerHeight / 2 - 20, left: window.innerWidth / 2 - 100, width: 200, height: 40, bottom: window.innerHeight / 2 + 20 };
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const spot = document.createElement('div');
+    spot.style.cssText = `position:fixed;top:${rect.top-6}px;left:${rect.left-6}px;width:${rect.width+12}px;height:${rect.height+12}px;border-radius:10px;box-shadow:0 0 0 9999px rgba(13,43,107,.6);border:2px solid #3A8FC7;pointer-events:none;`;
+    overlay.appendChild(spot);
+    const card = document.createElement('div');
+    const top = Math.max(16, Math.min(rect.bottom + 14, window.innerHeight - 200));
+    const left = Math.max(16, Math.min(rect.left, window.innerWidth - 316));
+    card.style.cssText = `position:fixed;top:${top}px;left:${left}px;width:280px;background:#fff;border-radius:10px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.3);`;
+    card.innerHTML = `
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">${i+1} de ${steps.length}</div>
+      <div style="font-weight:700;font-size:14px;margin-bottom:6px;">${step.titulo}</div>
+      <div style="font-size:13px;color:#475569;margin-bottom:14px;line-height:1.4;">${step.texto}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <button id="tour-skip" style="background:none;border:none;color:#94a3b8;font-size:12px;cursor:pointer;">Saltar recorrido</button>
+        <div style="display:flex;gap:8px;">
+          ${i > 0 ? `<button id="tour-prev" class="btn btn-secondary btn-sm">Atrás</button>` : ''}
+          <button id="tour-next" class="btn btn-primary btn-sm">${i === steps.length - 1 ? 'Listo' : 'Siguiente'}</button>
+        </div>
+      </div>`;
+    overlay.appendChild(card);
+    if (window.lucide) window.lucide.createIcons();
+    document.getElementById('tour-skip').onclick = cerrar;
+    document.getElementById('tour-next').onclick = () => { i++; if (i >= steps.length) cerrar(); else render(); };
+    if (i > 0) document.getElementById('tour-prev').onclick = () => { i--; render(); };
+  }
+  render();
+}
+window.iniciarTour = iniciarTour;
+
+const TOUR_CLIENTE_STEPS = [
+  { selector: '[data-section="home"]', titulo: '¡Bienvenido/a a tu Hub!', texto: 'Este es tu panel: acá vas a ver el resumen de todo lo que tu agencia está haciendo por vos.' },
+  { selector: '.notif-bell-wrap', titulo: 'Notificaciones', texto: 'La campanita te avisa cuando tu agencia te asigna algo, te menciona en un comentario, o hay novedades -- sin tener que revisar el mail. Tocala para ver el listado y marcar como leída.' },
+  { selector: '[data-section="tareas"]', titulo: 'Tareas', texto: 'Las tareas que tu agencia va completando para vos, organizadas en Kanban, Lista o Calendario.' },
+  { selector: '[data-section="contenidos"]', titulo: 'Contenidos', texto: 'El calendario de posteos y piezas gráficas -- podés ver el estado de cada uno y dejar comentarios.' },
+  { selector: '[data-section="pauta"]', titulo: 'Pauta digital', texto: 'Tus campañas de publicidad paga, con sus métricas.' },
+  { selector: '[data-section="links"]', titulo: 'Links y Archivos', texto: 'Todos los accesos y archivos importantes de tu marca, en un solo lugar.' },
+];
+window.reiniciarTourCliente = function() {
+  try { localStorage.removeItem('hub_tour_cliente_v1'); } catch (e) {}
+  iniciarTour(TOUR_CLIENTE_STEPS, 'hub_tour_cliente_v1');
+};
+
+// ── Bootstrap ──────────────────────────────────────────
+const user = requireAuth();
+if (!user) throw new Error('No auth');
+
+const params = new URLSearchParams(window.location.search);
+const clientId = params.get('client') || user.clientId;
+if (!clientId) { window.location.href = '../admin/index.html'; }
+
+// "Contenidos propios" / "Pauta propia" de la agencia (pedido de Vaneh,
+// 21/09): mismo pseudo-cliente `_cosmart` que ya usan Gestión COSMART y
+// Mis Tareas para lo interno -- el backend YA lo permite para cualquier
+// `type` en /data/:clientId/:type (ver ['_cosmart','_personal'] en
+// handleGetData/handleSaveData de cosmart-workers), y como la clave real
+// en KV es `agencyId:_cosmart:tipo`, sirve igual para CUALQUIER agencia,
+// no solo COSMART -- cada una aislada por su propio agencyId. Reusa
+// ÍNTEGRAMENTE este mismo panel (Contenidos, Guiones/Teleprompter,
+// Pauta) en vez de duplicar código en admin/index.html -- son módulos
+// demasiado grandes para mantener dos copias sincronizadas a mano.
+const esPropioAgencia = clientId === '_cosmart';
+
+// `embed=1`: este mismo panel se está mostrando adentro de un <iframe>
+// dentro de admin/index.html (sección "Contenidos propios"), en vez de
+// abrirse como página aparte -- pedido de Vaneh (21/09) después de ver
+// que el link a un panel de cliente distinto "no queda dentro del panel
+// de admin". Oculta todo el chrome de panel-de-cliente (logo, cambiar
+// de cliente, Puertos COSMART, cerrar sesión) y deja solo la navegación
+// entre secciones (ver init()).
+const embedMode = params.get('embed') === '1';
+
+let STATE = { contenidos: [], tareas: [], campanas: [], metricas: {}, ideas: [], client: {}, links: [] };
+let currentSection = 'home';
+let _tareasView = 'kanban';
+let _tareasBusqueda = '';
+let _tareasFiltroAsignado = ''; // '' = todos, '_sin_asignar' = sin asignar, o el email de un colaborador/usuario del equipo
+let _tareasFiltroPrioridad = '';
+let _tareasFiltroFecha = ''; // '' | 'hoy' | 'semana' | 'mes' | 'sinfecha' -- pedido de Vaneh (27/09), mismo filtro que ya tiene Mis Tareas del admin
+let _tareasOrden = 'fecha'; // 'fecha' | 'prioridad' -- pedido de Vaneh (08/09): "todos tienen ue tener"
+
+// "Esta semana"/"Este mes" son el rango CALENDARIO (lunes a domingo / 1 al
+// último día del mes), no "próximos N días" -- entran también las vencidas
+// de esa semana/mes. Mismo criterio que fechaEnRangoFiltro() en admin/index.html.
+function fechaEnRangoFiltro(fecha, filtro) {
+  if (!filtro) return true;
+  if (filtro === 'sinfecha') return !fecha;
+  if (!fecha) return false;
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const hoyStr = hoy.toISOString().split('T')[0];
+  if (filtro === 'hoy') return fecha === hoyStr;
+  if (filtro === 'semana') {
+    const diaSemana = hoy.getDay();
+    const lunes = new Date(hoy); lunes.setDate(hoy.getDate() + (diaSemana === 0 ? -6 : 1 - diaSemana));
+    const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
+    return fecha >= lunes.toISOString().split('T')[0] && fecha <= domingo.toISOString().split('T')[0];
+  }
+  if (filtro === 'mes') return fecha.slice(0, 7) === hoyStr.slice(0, 7);
+  return true;
+}
+let editingContenido = null;
+let editingTarea = null;
+let editingCampana = null;
+
+// Equipo de COSMART (admin + colaboradores) con acceso a ESTE cliente --
+// pedido de Vaneh (07/09): en el tablero de un cliente (ej. Pharus) no se
+// podía asignar tareas a colaboradores, solo a los usuarios del equipo del
+// cliente. Se precarga en init() junto con STATE.client; si el que mira
+// esta pantalla es el cliente mismo (no admin/colaborador), /admin/equipo
+// devuelve 403 y queda vacío -- no le cambia nada a un cliente real.
+let _equipoDelCliente = [];
+
+window.cerrarSesionYVolver = function() {
+  localStorage.removeItem('mh_session_token');
+  localStorage.removeItem('mh_user');
+  window.location.href = '/login.html';
+};
+
+// ── Init ───────────────────────────────────────────────
+async function init() {
+  try {
+    document.getElementById('logoutBtn').addEventListener('click', logoutUser);
+
+    // Sin suscripción (prueba con tarjeta, activa o dada de baja con lo ya pagado) no se puede usar la app.
+    const cuenta = await obtenerCuenta();
+    if (!cuenta) return;
+    if (!cuenta.suscripcion || !cuenta.suscripcion.activo) { window.location.href = 'suscripcion.html'; return; }
+    window.CUENTA = cuenta;
+    // Esta app no sube archivos (se pegan links) ni tiene logo de empresa
+    document.getElementById('img-file-input')?.closest('.form-group')?.classList.add('hidden');
+    document.querySelector('.client-logo-wrap')?.style.setProperty('pointer-events', 'none');
+
+    if (embedMode) {
+      // Ocultar el chrome de panel-de-cliente ANTES de pedir los datos
+      // (no después, como estaba) -- Vaneh (11/10): adentro del iframe de
+      // "Contenidos propios" del admin, durante los segundos que tarda
+      // loadAllData() se veía el panel de cliente COMPLETO sin embeber
+      // (sidebar, "Puertos COSMART", cerrar sesión) y recién después se
+      // ocultaba todo eso -- literal "un panel adentro de otro panel"
+      // por varios segundos. Moviendo esto antes del fetch, el chrome
+      // nunca llega a pintarse.
+      // Adentro del iframe de "Contenidos propios" (admin/index.html):
+      // un segundo menú lateral al lado del del admin se veía como "dos
+      // menús" (Vaneh: "no me gusta cómo quedó"). Se saca el sidebar
+      // entero y se reemplaza por solapas horizontales arriba del
+      // contenido -- mismo estilo `.tabs`/`.tab-btn` que ya se usa para
+      // las sub-secciones de Contenidos, para que se sienta parte del
+      // mismo panel en vez de otro menú aparte.
+      document.querySelector('.sidebar').style.display = 'none';
+      document.getElementById('sidebar-toggle').style.display = 'none';
+      document.getElementById('fab-btn').style.display = 'none';
+      document.getElementById('mobile-bottom-nav').style.display = 'none';
+      const EMBED_TABS = [['contenidos', 'Contenidos'], ['guiones', 'Guiones'], ['pauta', 'Pauta Digital'], ['dashboard', 'Dashboard']];
+      const tabBar = document.createElement('div');
+      tabBar.id = 'embed-tabs';
+      tabBar.className = 'tabs';
+      tabBar.style.cssText = 'margin:16px 24px 0;flex-shrink:0;';
+      tabBar.innerHTML = EMBED_TABS.map(([sec, label], i) => `<button type="button" class="tab-btn${i === 0 ? ' active' : ''}" data-embed-sec="${sec}">${label}</button>`).join('');
+      tabBar.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          tabBar.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          renderSection(btn.dataset.embedSec);
+        });
+      });
+      document.querySelector('.main').insertBefore(tabBar, document.getElementById('main-content'));
+    }
+
+    // Logo upload
+    document.getElementById('client-logo-input').addEventListener('change', async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async ev => {
+        const logo = ev.target.result;
+        if (!STATE.home) STATE.home = { prioridades: [], todos: [], links: [], webTareas: [], archivos: [] };
+        STATE.home.logoEmpresa = logo;
+        applyClientLogo(logo);
+        await saveHomeData(clientId, STATE.home);
+      };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+    });
+
+    await loadAllData(); // trae client, equipo y todo lo demás en una sola tanda -- ver el comentario ahí
+    window.STATE = STATE; // necesario para inline handlers en módulos ES
+    document.getElementById('sb-client-name').textContent = esPropioAgencia ? 'Contenidos propios' : (STATE.client.nombre || STATE.client.name || clientId);
+    document.getElementById('sb-client-ig').textContent = esPropioAgencia ? '' : (STATE.client.instagram || '');
+    if (esPropioAgencia) {
+      // Solo Contenidos, Guiones y Pauta tienen sentido acá -- lo demás
+      // (Home con recordatorios de facturación, Tareas que ya se ve
+      // aparte como "Gestión COSMART", Web, Plan, Reportes, Links,
+      // Instrucciones) es de un cliente real, no de la agencia misma.
+      ['home', 'tareas', 'web', 'plan', 'reportes', 'links', 'instrucciones'].forEach(sec => {
+        document.querySelector(`.nav-item[data-section="${sec}"]`)?.classList.add('hidden');
+      });
+    }
+    if (!esPropioAgencia && !embedMode) {
+      if (user.role !== 'client') setupClientSwitcher();
+      else document.getElementById('sb-client-switcher-trigger').style.cursor = 'default';
+      if (STATE.home.logoEmpresa) applyClientLogo(STATE.home.logoEmpresa);
+      if ((STATE.plan && STATE.plan.html) || user.role !== 'client') document.getElementById('nav-plan')?.classList.remove('hidden');
+      if (STATE.reportes.length || user.role !== 'client') document.getElementById('nav-reportes')?.classList.remove('hidden');
+    }
+    setupNav();
+    const openTipo = params.get('open');
+    const openId = params.get('id');
+    if (openTipo === 'contenido' && openId && STATE.contenidos.some(c => c.id === openId)) {
+      renderSection('contenidos');
+      openContenidoModalById(openId);
+    } else if (openTipo === 'tarea' && openId && STATE.tareas.some(t => t.id === openId)) {
+      renderSection('tareas');
+      openTareaModal(openId);
+    } else if (openTipo === 'web' && openId && (STATE.home.webTareas || []).some(t => String(t.id) === String(openId))) {
+      renderSection('web');
+      openWebTaskModal(openId);
+    } else if (esPropioAgencia) {
+      renderSection('contenidos');
+    } else {
+      renderSection('contenidos');
+    }
+    setTimeout(() => refreshIcons(), 100);
+    setTimeout(() => iniciarTour(TOUR_APP_STEPS(), 'cal_tour_v1'), 900);
+    // Avisa a admin/index.html (el padre del iframe) que ya terminó de
+    // pintar -- así la pantalla de carga con la brújula desaparece recién
+    // cuando hay contenido real, no antes (Vaneh, 11/10: no quería ni el
+    // retraso sin feedback ni el "panel adentro de otro panel"; esto
+    // resuelve lo primero, el chrome oculto desde el principio -- ver
+    // comentario de embedMode más arriba -- resuelve lo segundo).
+    if (embedMode) window.parent.postMessage({ type: 'contenidos-propios-ready' }, window.location.origin);
+    // Solo para el cliente en su propia cuenta -- si un admin/colaborador
+    // abrió este panel "como" el cliente (ver "Abrir en panel del
+    // cliente" en Mis Tareas), no tiene sentido mostrarle el tour.
+
+    if (!embedMode) {
+      cargarNotificaciones();
+      setInterval(cargarNotificaciones, 60000);
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.notif-bell-wrap')) document.getElementById('notifDropdown')?.classList.add('hidden');
+      });
+    }
+  } catch (err) {
+    const content = document.getElementById('main-content');
+    const esPermisos = err.message === 'Sin permisos' || err.message === 'No autorizado';
+    if (content) content.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>Error al cargar</h3><p style="max-width:340px;">${err.message || 'Error desconocido. Revisá la consola del navegador.'}</p>
+      ${esPermisos ? `<p style="max-width:340px;font-size:13px;color:var(--text-muted);margin-top:8px;">Esta sesión no tiene acceso a este cliente. Puede que este navegador tenga guardada una cuenta distinta a la tuya.</p>` : ''}
+      <div style="display:flex;gap:8px;margin-top:16px;">
+        <button class="btn btn-primary" onclick="location.reload()">Reintentar</button>
+        ${esPermisos ? `<button class="btn btn-secondary" onclick="window.cerrarSesionYVolver()">Cerrar sesión y volver a entrar</button>` : ''}
+      </div>
+    </div>`;
+    console.error('[init] Error:', err);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// NOTIFICACIONES (campanita) -- pedido de Vaneh (27/09): todo lo que
+// se genere en el Hub (asignación, mención, movimiento de una tarea/
+// contenido del cliente, comentario nuevo) tiene que impulsar una
+// notificación acá además del mail que ya se manda. Mismo mecanismo
+// duplicado en admin/index.html (scripts separados).
+// ══════════════════════════════════════════════════════════════
+let _notifsCache = [];
+const NOTIF_ICONS = { asignacion: 'user-plus', mencion: 'at-sign', estado: 'move', comentario: 'message-circle', contenido_editado: 'pencil', lead: 'target', venta: 'party-popper' };
+
+async function cargarNotificaciones() {
+  try {
+    _notifsCache = await getNotificaciones();
+  } catch (e) { return; }
+  const noLeidas = _notifsCache.filter(n => !n.leida).length;
+  const badge = document.getElementById('notifBellBadge');
+  if (badge) {
+    badge.textContent = noLeidas > 9 ? '9+' : String(noLeidas);
+    badge.classList.toggle('hidden', noLeidas === 0);
+  }
+  if (!document.getElementById('notifDropdown')?.classList.contains('hidden')) renderNotifList();
+}
+
+function renderNotifList() {
+  const el = document.getElementById('notifList');
+  if (!el) return;
+  if (!_notifsCache.length) { el.innerHTML = '<div class="notif-empty">Sin notificaciones todavía.</div>'; return; }
+  el.innerHTML = _notifsCache.map(n => {
+    const f = new Date(n.creadaEn);
+    const fechaTxt = f.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' + f.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    // Solo tarea/contenido tienen este cambio rápido de estado -- una
+    // tarea de Sitio Web (itemTipo:'web') vive en otro tipo de dato
+    // (STATE.home, no 'tareas') y este selector no sabría a qué apuntar.
+    const estadoSel = (n.itemTipo === 'tarea' || n.itemTipo === 'contenido') ? `
+      <select class="notif-estado-sel" onchange="event.stopPropagation();cambiarEstadoNotif('${n.id}', this.value)">
+        <option value="">Cambiar estado…</option>
+        <option value="Sin empezar" ${n.estadoActual === 'Sin empezar' ? 'selected' : ''}>Sin empezar</option>
+        <option value="En progreso" ${n.estadoActual === 'En progreso' ? 'selected' : ''}>En progreso</option>
+        <option value="Listo" ${n.estadoActual === 'Listo' ? 'selected' : ''}>Listo</option>
+      </select>` : '';
+    return `
+      <div class="notif-item ${n.leida ? '' : 'notif-unread'}">
+        <i data-lucide="${NOTIF_ICONS[n.tipo] || 'bell'}" class="notif-ico" style="width:15px;height:15px;"></i>
+        <div class="notif-body">
+          <div class="notif-msg" onclick="abrirDesdeNotif('${n.id}')">${escapeHtml(n.mensaje)}</div>
+          <div class="notif-fecha">${fechaTxt}</div>
+          ${estadoSel}
+        </div>
+        <div class="notif-acciones">
+          <button title="${n.leida ? 'Marcar no leída' : 'Marcar leída'}" onclick="toggleLeidaNotif('${n.id}', ${!n.leida})"><i data-lucide="${n.leida ? 'mail' : 'mail-open'}" style="width:14px;height:14px;"></i></button>
+          <button title="Recordar en el próximo inicio de sesión" onclick="recordarNotifDespues('${n.id}')"><i data-lucide="clock" style="width:14px;height:14px;"></i></button>
+        </div>
+      </div>`;
+  }).join('');
+  setTimeout(refreshIcons, 30);
+}
+
+window.toggleNotifDropdown = function() {
+  const dd = document.getElementById('notifDropdown');
+  const abrir = dd.classList.contains('hidden');
+  dd.classList.toggle('hidden', !abrir);
+  if (abrir) { renderNotifList(); cargarNotificaciones(); }
+};
+
+window.toggleLeidaNotif = async function(id, leida) {
+  const n = _notifsCache.find(x => x.id === id);
+  if (n) n.leida = leida;
+  renderNotifList();
+  try { await actualizarNotificacion(id, { leida }); } catch (e) {}
+  cargarNotificaciones();
+};
+
+window.recordarNotifDespues = async function(id) {
+  _notifsCache = _notifsCache.filter(x => x.id !== id);
+  renderNotifList();
+  try { await actualizarNotificacion(id, { oculta: true }); } catch (e) {}
+  cargarNotificaciones();
+};
+
+window.cambiarEstadoNotif = async function(id, estado) {
+  if (!estado) return;
+  const n = _notifsCache.find(x => x.id === id);
+  if (n) { n.estadoActual = estado; n.leida = true; }
+  renderNotifList();
+  try { await actualizarNotificacion(id, { estado }); } catch (e) {}
+  // Si el ítem cambiado es de la sección que se está viendo ahora mismo,
+  // refresca para que el cambio se vea sin tener que navegar afuera y volver.
+  if (n?.itemTipo === 'tarea' && currentSection === 'tareas') { STATE.tareas = await getTareas(clientId); renderSection('tareas'); }
+  else if (n?.itemTipo === 'contenido' && currentSection === 'contenidos') { STATE.contenidos = await getContenidos(clientId); renderSection('contenidos'); }
+  cargarNotificaciones();
+};
+
+window.marcarTodasNotifsLeidas = async function() {
+  const noLeidas = _notifsCache.filter(n => !n.leida);
+  noLeidas.forEach(n => n.leida = true);
+  renderNotifList();
+  await Promise.all(noLeidas.map(n => actualizarNotificacion(n.id, { leida: true }).catch(() => {})));
+  cargarNotificaciones();
+};
+
+window.abrirDesdeNotif = async function(id) {
+  const n = _notifsCache.find(x => x.id === id);
+  if (!n) return;
+  if (!n.leida) { n.leida = true; actualizarNotificacion(id, { leida: true }).catch(() => {}); }
+  if (n.link) { window.location.href = n.link; return; }
+  document.getElementById('notifDropdown')?.classList.add('hidden');
+};
+
+async function loadAllData() {
+  // Pedido de Vaneh (11/09, y de nuevo 13/09: "no puede tardar más de 1
+  // segundo, las páginas con esta carga sufren abandono instantánea").
+  // Antes se esperaban 10 pedidos en paralelo ANTES de mostrar nada --
+  // aunque vayan todos juntos, el tiempo total lo marca el más lento de
+  // los diez. Ahora solo se espera lo que Home/la barra lateral necesitan
+  // para el primer pintado (4 pedidos); el resto (equipo, pauta,
+  // métricas, ideas, plan, reportes) se pide en segundo plano, sin
+  // bloquear, y actualiza la pantalla sola cuando llega -- ver
+  // cargarDatosSecundarios() más abajo.
+  const criticalCalls = {
+    client: getClientData(clientId), cont: getContenidos(clientId),
+    tareas: getTareas(clientId), home: getHomeData(clientId),
+  };
+  const criticalKeys = Object.keys(criticalCalls);
+  const criticalSettled = await Promise.allSettled(criticalKeys.map(k => criticalCalls[k]));
+  const r = {};
+  criticalSettled.forEach((res, i) => {
+    if (res.status === 'fulfilled') r[criticalKeys[i]] = res.value;
+    else console.error(`[loadAllData] Falló "${criticalKeys[i]}":`, res.reason);
+  });
+  const { client, cont, tareas, home } = r;
+  STATE.client = client || { id: clientId, nombre: clientId };
+  STATE.contenidos = cont || [];
+  STATE.tareas = tareas || [];
+  // Recurrentes que quedaron "Listo" de antes de que existiera el regenerado
+  // inmediato (09/09, pedido de Vaneh: "tiene que tener el mismo
+  // comportamiento" que las que se completan ahora) -- se regeneran apenas
+  // se cargan, en vez de quedar esperando al cron para siempre. La vieja
+  // queda "Lista" tal cual estaba (ver regenerarSiRecurrente); solo hace
+  // falta guardar si de verdad se generó un próximo ciclo.
+  const _recurrentesAResetear = STATE.tareas.filter(t => t.recurrencia && t.estado === 'Listo');
+  _recurrentesAResetear.forEach(t => { if (regenerarSiRecurrente(t, STATE.tareas)) saveTarea(clientId, t, STATE.tareas).catch(() => {}); });
+  STATE.home = home || { prioridades: [], todos: [], links: [], webTareas: [], archivos: [] };
+  // Valores por defecto para lo que todavía no llegó (wave 2), así ninguna
+  // sección explota si el usuario navega ahí antes de que termine de cargar.
+  STATE.campanas = STATE.campanas || [];
+  STATE.metricas = STATE.metricas || {};
+  STATE.ideas = STATE.ideas || [];
+  STATE.plan = STATE.plan || { html: '' };
+  STATE.reportes = STATE.reportes || [];
+  STATE.guiones = STATE.guiones || [];
+  _equipoDelCliente = _equipoDelCliente || [];
+  // Links guardados antes de que existiera el campo `id` (o cargados a mano
+  // en Firestore) llegan sin id -- eso hace que openLinkModal('undefined')
+  // matchee cualquier link sin id en vez del que se clickeó, y el modal
+  // termina mostrándose como "Nuevo link" en vez de editar el correcto.
+  // Les asignamos un id estable acá para que el botón de editar siempre
+  // abra el link correcto.
+  let _linkIdSeed = Date.now();
+  let _linksSinId = false;
+  STATE.links = (home?.links || []).map(l => {
+    if (l.id) return l;
+    _linksSinId = true;
+    return { ...l, id: ++_linkIdSeed };
+  });
+  STATE.home.links = STATE.links;
+  if (_linksSinId) saveHomeData(clientId, STATE.home).catch(() => {});
+  updateBadges();
+  cargarDatosSecundarios(); // en segundo plano, no se espera
+}
+
+async function cargarDatosSecundarios() {
+  const calls = {
+    equipo: getEquipo(), campanas: getCampanas(clientId), metricas: getMetricas(clientId),
+    ideas: getIdeas(clientId), plan: getPlan(clientId), reportesIndice: getReportesIndice(clientId),
+    guiones: getGuiones(clientId),
+  };
+  const keys = Object.keys(calls);
+  const settled = await Promise.allSettled(keys.map(k => calls[k]));
+  const r = {};
+  settled.forEach((res, i) => {
+    if (res.status === 'fulfilled') r[keys[i]] = res.value;
+    else console.error(`[cargarDatosSecundarios] Falló "${keys[i]}":`, res.reason);
+  });
+  _equipoDelCliente = (r.equipo || []).filter(c => c.role === 'admin' || (c.clientIds || []).includes(clientId));
+  STATE.campanas = r.campanas || [];
+  STATE.metricas = r.metricas || {};
+  STATE.ideas = r.ideas || [];
+  STATE.plan = r.plan || { html: '' };
+  STATE.reportes = (r.reportesIndice || []).slice().sort((a, b) => (a.mes < b.mes ? 1 : -1)); // más nuevo primero, sin el html todavía
+  STATE.guiones = r.guiones || [];
+  if (!esPropioAgencia) {
+    if ((STATE.plan && STATE.plan.html) || user.role !== 'client') document.getElementById('nav-plan')?.classList.remove('hidden');
+    if (STATE.reportes.length || user.role !== 'client') document.getElementById('nav-reportes')?.classList.remove('hidden');
+  }
+  // Si el usuario ya está mirando una sección que depende de estos datos
+  // (pauta, ideas, plan, reportes, dashboard, guiones) se refresca sola con
+  // lo que acaba de llegar -- si está en Home o Tareas, no hace falta, esas
+  // no usan nada de acá.
+  if (['pauta', 'ideas', 'plan', 'reportes', 'dashboard', 'guiones'].includes(currentSection)) renderSection(currentSection);
+}
+
+function applyClientLogo(src) {
+  const img = document.getElementById('sb-client-logo');
+  const placeholder = document.getElementById('sb-client-logo-placeholder');
+  const hint = document.querySelector('.client-logo-upload-hint');
+  const wrap = document.querySelector('.client-logo-wrap');
+  img.src = src;
+  img.style.cssText = 'display:block;width:100%;height:100%;object-fit:cover;border-radius:50%;';
+  if (placeholder) placeholder.style.display = 'none';
+  if (hint) hint.style.display = 'none';
+  if (wrap) {
+    // Pedido de Vaneh (07/09): con logo cargado, borde continuo (el
+    // punteado queda solo como indicador de "acá falta subir algo") --
+    // y si es PNG (suele venir con transparencia) fondo blanco atrás,
+    // para que se distinga en el sidebar oscuro.
+    wrap.classList.add('has-logo');
+    wrap.classList.toggle('logo-png', /\.png($|\?)|^data:image\/png/i.test(src));
+  }
+}
+
+// Selector de cliente en el sidebar -- pedido de Vaneh (07/09): como
+// admin/colaboradora, poder saltar de un cliente a otro sin salir y
+// volver a entrar al hub. Solo para admin/colaborador (un cliente real
+// no tiene otros clientes para elegir). Usa /admin/clients, que el
+// backend ya filtra solo a los clientes asignados si sos colaborador.
+// Nota: NO muestra el logo real de cada cliente (ese vive en los datos
+// "home" de cada uno, cargarlos todos de antemano para esto sería caro)
+// -- usa el mismo círculo con iniciales/código que ya se usa en el resto
+// del admin para identificar clientes de un vistazo.
+const CLIENT_SWITCHER_COLORS = ['#1A4DAA','#3A8FC7','#10b981','#f59e0b','#ec4899','#8b5cf6','#e02020','#0d9488'];
+function colorDesdeTexto(s) {
+  let hash = 0;
+  for (let i = 0; i < (s || '').length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  return CLIENT_SWITCHER_COLORS[hash % CLIENT_SWITCHER_COLORS.length];
+}
+
+async function setupClientSwitcher() {
+  const trigger = document.getElementById('sb-client-switcher-trigger');
+  const dropdown = document.getElementById('sb-client-switcher-dropdown');
+  if (!trigger || !dropdown) return;
+  const caret = document.getElementById('sb-client-switcher-caret');
+  if (caret) { caret.style.display = ''; refreshIcons(); }
+
+  let clientesCache = null;
+  const abrir = async () => {
+    if (!clientesCache) {
+      try { clientesCache = (await getAllClients()).filter(c => c.activo !== false); }
+      catch (e) { clientesCache = []; }
+    }
+    dropdown.innerHTML = clientesCache.length
+      ? clientesCache.map(c => {
+          const codigo = c.codigo || codigoDesdeNombre(c.nombre || c.name || c.id);
+          const activo = c.id === clientId;
+          return `
+            <div class="client-switcher-item ${activo ? 'active' : ''}" data-client-id="${c.id}">
+              <div class="client-switcher-avatar" style="background:${colorDesdeTexto(c.id)};">${codigo}</div>
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.nombre || c.name || c.id}</span>
+            </div>`;
+        }).join('')
+      : `<div style="padding:10px;font-size:12px;color:var(--text-muted);">No hay otros clientes.</div>`;
+    dropdown.querySelectorAll('.client-switcher-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const id = item.dataset.clientId;
+        if (id !== clientId) window.location.href = `index.html?client=${id}`;
+        else dropdown.classList.add('hidden');
+      });
+    });
+    dropdown.classList.remove('hidden');
+  };
+
+  trigger.addEventListener('click', () => {
+    dropdown.classList.contains('hidden') ? abrir() : dropdown.classList.add('hidden');
+  });
+  document.addEventListener('click', e => {
+    if (!dropdown.contains(e.target) && !trigger.contains(e.target)) dropdown.classList.add('hidden');
+  });
+}
+
+function codigoDesdeNombre(nombre) {
+  const palabras = (nombre || '').split(/[^a-zA-ZÀ-ÿ]+/).filter(Boolean);
+  if (!palabras.length) return '';
+  if (palabras.length === 1) return palabras[0].slice(0, 2).toUpperCase();
+  return (palabras[0][0] + palabras[1][0]).toUpperCase();
+}
+function codigoCliente() {
+  return STATE.client?.codigo || codigoDesdeNombre(STATE.client?.nombre || STATE.client?.name || clientId);
+}
+function codigoTarea(t) {
+  if (!t.numero) return '';
+  return `${codigoCliente()}-${String(t.numero).padStart(2, '0')}`;
+}
+
+// Cuadrante de Covey (urgente/importante) -- campo aparte de "Prioridad".
+const CUADRANTE_EMOJI = {
+  'Urgente e Importante': '🔴',
+  'Importante pero no Urgente': '🟡',
+  'Urgente pero no Importante': '🟠',
+  'Ni Urgente ni Importante': '⚪',
+};
+function cuadranteBadge(c) {
+  if (!c || !CUADRANTE_EMOJI[c]) return '';
+  return `<span title="${c}" style="font-size:11px;">${CUADRANTE_EMOJI[c]}</span>`;
+}
+
+function tareasVisibles(lista) {
+  if (user.role !== 'client') return lista;
+  return lista.filter(t => t.visibleParaCliente === true);
+}
+
+// ══════════════════════════════════════════════════════════════
+// PERMISOS POR TAREA + HISTORIAL DE CAMBIOS -- pedido de Vaneh (27/09):
+// "cada colaborador tiene que ver solo sus tareas... también restringir
+// quién del equipo la puede ver". Mismo bloque duplicado en
+// admin/index.html (script aparte). Acá aplica solo al tablero de Tareas
+// del cliente real (`tf-*`) -- Gestión COSMART/Mis Tareas viven enteras
+// en admin/index.html.
+// ══════════════════════════════════════════════════════════════
+
+// t.restringidaA: null/ausente (todo el equipo la ve, default) |
+// 'creador' (solo quien la creó) | array de emails (esos + el creador).
+// El admin siempre ve todo. Un CLIENTE no pasa por acá -- lo que ve o no
+// ve un cliente lo decide únicamente visibleParaCliente (control aparte,
+// ya existente), restringidaA es una regla solo para el equipo interno.
+function puedeVerTarea(t, u) {
+  if (!t) return true;
+  if (u.role === 'admin') return true;
+  if (!t.restringidaA) return true;
+  const email = (u.email || '').toLowerCase();
+  if (t.restringidaA === 'creador') return (t.creadoPor || '').toLowerCase() === email;
+  if (Array.isArray(t.restringidaA)) {
+    return t.restringidaA.map(e => (e || '').toLowerCase()).includes(email) || (t.creadoPor || '').toLowerCase() === email;
+  }
+  return true;
+}
+
+// Normaliza un título para comparar duplicados: minúsculas, sin acentos
+// ni puntuación, espacios colapsados. normImportTexto (import de Excel,
+// más abajo en este archivo) no saca acentos/puntuación -- para detectar
+// "Publicar post IG" vs "publicar post ig!" hace falta algo más agresivo.
+function normTituloDup(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Advertencia de posible duplicado al CREAR una tarea -- NO bloquea, solo
+// avisa. Coincide si el título normalizado es idéntico, o si uno de los
+// dos contiene casi entero al otro (>=85% de la longitud del más corto,
+// mínimo 6 caracteres para no disparar con títulos cortos genéricos).
+// Umbral elegido a criterio, ajustable si Vaneh lo ve muy sensible o muy
+// laxo. Solo mira tareas no archivadas sin terminar (estado != 'Listo')
+// o recurrentes (una recurrente "Lista" vuelve sola, también cuenta).
+function buscarTareaSimilar(titulo, lista, excludeId) {
+  const norm = normTituloDup(titulo);
+  if (!norm) return null;
+  const candidatas = (lista || []).filter(t => !t.archivado && t.id !== excludeId && (t.estado !== 'Listo' || t.recurrencia));
+  for (const t of candidatas) {
+    const n2 = normTituloDup(t.titulo);
+    if (!n2) continue;
+    if (n2 === norm) return t;
+    const corto = n2.length <= norm.length ? n2 : norm;
+    const largo = n2.length <= norm.length ? norm : n2;
+    if (corto.length >= 6 && largo.includes(corto) && corto.length / largo.length >= 0.85) return t;
+  }
+  return null;
+}
+
+// Historial de cambios -- se calcula comparando la tarea ANTES de abrir
+// el modal (snapshot tomado al abrir) contra lo que se va a guardar.
+// Solo aplica al EDITAR una tarea ya existente, nunca al crear.
+const CAMPOS_HISTORIAL_LABEL = { titulo: 'el título', estado: 'el estado', prioridad: 'la prioridad', vencimiento: 'el vencimiento', visibleParaCliente: 'la visibilidad para el cliente', restringidaA: 'la visibilidad para el equipo' };
+function valorLegibleHistorial(campo, valor) {
+  if (campo === 'visibleParaCliente') return valor === true ? 'Visible' : 'No visible';
+  if (campo === 'restringidaA') {
+    if (!valor) return 'Todo el equipo';
+    if (valor === 'creador') return 'Solo el creador';
+    if (Array.isArray(valor)) return `Colaboradores específicos (${valor.length})`;
+    return String(valor);
+  }
+  return (valor == null || valor === '') ? '(vacío)' : String(valor);
+}
+function calcularHistorialCambios(anterior, nuevo, u) {
+  if (!anterior) return [];
+  const entradas = [];
+  Object.keys(CAMPOS_HISTORIAL_LABEL).forEach(campo => {
+    const vAnt = anterior[campo] ?? null;
+    const vNue = nuevo[campo] ?? null;
+    const igual = campo === 'restringidaA' ? JSON.stringify(vAnt || null) === JSON.stringify(vNue || null) : vAnt === vNue;
+    if (!igual) entradas.push({ campo: CAMPOS_HISTORIAL_LABEL[campo], anterior: valorLegibleHistorial(campo, vAnt), nuevo: valorLegibleHistorial(campo, vNue), quien: u.email, quienNombre: u.name || u.email, fecha: new Date().toISOString() });
+  });
+  const emailAnt = (anterior.asignado?.email || '').toLowerCase();
+  const emailNue = (nuevo.asignado?.email || '').toLowerCase();
+  if (emailAnt !== emailNue) entradas.push({ campo: 'el asignado', anterior: anterior.asignado?.nombre || (emailAnt || 'Sin asignar'), nuevo: nuevo.asignado?.nombre || (emailNue || 'Sin asignar'), quien: u.email, quienNombre: u.name || u.email, fecha: new Date().toISOString() });
+  return entradas;
+}
+// Muta `obj` sumando las entradas nuevas a su historial (tope 50, más
+// recientes al final -- se listan invertidas al renderizar).
+function aplicarHistorial(obj, anterior, u) {
+  if (!anterior) { obj.historialCambios = obj.historialCambios || []; return obj; }
+  const nuevas = calcularHistorialCambios(anterior, obj, u);
+  obj.historialCambios = [...(anterior.historialCambios || []), ...nuevas].slice(-50);
+  return obj;
+}
+function fmtFechaHistorial(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' }) + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+}
+function renderHistorialHtml(historial) {
+  if (!historial || !historial.length) return '<p style="font-size:12px;color:var(--text-muted);margin:0;">Sin cambios registrados todavía.</p>';
+  return [...historial].reverse().map(h => `<div style="font-size:12px;color:var(--text-muted);padding:4px 0;border-bottom:1px solid var(--border);">· ${fmtFechaHistorial(h.fecha)} — <strong>${escapeHtml(h.quienNombre || h.quien || '')}</strong> cambió ${escapeHtml(h.campo)} de "${escapeHtml(String(h.anterior ?? '(vacío)'))}" a "${escapeHtml(String(h.nuevo ?? '(vacío)'))}"</div>`).join('');
+}
+
+// Control "Visible para el equipo" (tf-*, único modal de este archivo).
+// El listado de "colaboradores específicos" es _equipoDelCliente (el
+// equipo de la agencia con acceso a ESTE cliente, mismo universo que ya
+// usa getAsignarOptions) -- no el contacto/equipo del cliente, porque la
+// restricción es "otro colaborador", no "el cliente" (eso ya lo maneja
+// visibleParaCliente aparte).
+window.toggleTfRestrEspecificos = function() {
+  const modo = document.getElementById('tf-restr-modo')?.value;
+  document.getElementById('tf-restr-especificos')?.classList.toggle('hidden', modo !== 'especificos');
+};
+function poblarTfRestrEspecificos(seleccionados) {
+  const cont = document.getElementById('tf-restr-especificos');
+  if (!cont) return;
+  const emails = (seleccionados || []).map(e => (e || '').toLowerCase());
+  const seen = new Set();
+  const equipo = _equipoDelCliente.filter(c => { if (!c.email || seen.has(c.email.toLowerCase())) return false; seen.add(c.email.toLowerCase()); return true; });
+  cont.innerHTML = equipo.length
+    ? equipo.map(c => `<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:400;"><input type="checkbox" class="tf-restr-chk" value="${c.email.toLowerCase()}"${emails.includes(c.email.toLowerCase()) ? ' checked' : ''}> ${c.nombre}</label>`).join('')
+    : '<p style="font-size:12px;color:var(--text-muted);margin:0;">No hay otros colaboradores con acceso a este cliente.</p>';
+}
+function setTfRestrUI(restringidaA) {
+  const sel = document.getElementById('tf-restr-modo');
+  if (!sel) return;
+  sel.value = !restringidaA ? '' : (restringidaA === 'creador' ? 'creador' : 'especificos');
+  window.toggleTfRestrEspecificos();
+  poblarTfRestrEspecificos(Array.isArray(restringidaA) ? restringidaA : []);
+}
+function leerTfRestrUI() {
+  const sel = document.getElementById('tf-restr-modo');
+  if (!sel) return null;
+  const modo = sel.value;
+  if (!modo) return null;
+  if (modo === 'creador') return 'creador';
+  const arr = Array.from(document.querySelectorAll('.tf-restr-chk:checked')).map(cb => cb.value);
+  return arr.length ? arr : null;
+}
+
+function updateBadges() {
+  const pending = tareasVisibles(STATE.tareas).filter(t => t.estado !== 'Listo').length;
+  document.getElementById('badge-tareas') && (document.getElementById('badge-tareas').textContent = pending);
+  if (typeof updateBnavBadge === 'function') updateBnavBadge();
+}
+
+// ── Nav ────────────────────────────────────────────────
+function setupNav() {
+  document.querySelectorAll('.nav-item[data-section]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderSection(btn.dataset.section);
+    });
+  });
+}
+
+function renderSection(sec) {
+  currentSection = sec;
+  document.querySelectorAll('.nav-item[data-section]').forEach(b => {
+    b.classList.toggle('active', b.dataset.section === sec);
+  });
+  // Sincronizar bottom nav y FAB en mobile
+  if (typeof updateBottomNav === 'function') updateBottomNav(sec);
+  if (typeof updateFab === 'function') updateFab(sec);
+  const titles = { instrucciones: 'Cómo se usa', cuentas: 'Mis cuentas', home: 'Inicio', dashboard: 'Dashboard Editorial', contenidos: 'Contenidos', guiones: 'Guiones', tareas: 'Tareas', pauta: 'Pauta Digital', links: 'Links y Archivos', web: 'Sitio Web', plan: 'Plan de ejecución', reportes: 'Reportes', instrucciones: 'Instrucciones' };
+  const subs = { instrucciones: 'Una guía rápida para sacarle el jugo', cuentas: 'Cargalas una sola vez y el formulario te las trae siempre', home: 'Resumen y prioridades del mes', dashboard: 'Calendario editorial y métricas de contenido', contenidos: 'Gestión de contenidos para redes sociales', guiones: 'Repositorio de guiones para grabar, vinculados o no a un contenido', tareas: 'Tareas internas del equipo', pauta: 'Campañas y métricas de pauta digital', links: 'Atajos rápidos y documentos clave del cliente', web: 'Gestión del sitio web: contenidos, arreglos y métricas', plan: 'Plan estratégico del cliente', reportes: 'Reportes mensuales de resultados', instrucciones: 'Guía de uso del Marketing Hub' };
+  document.getElementById('topbar-title').textContent = titles[sec];
+  document.getElementById('topbar-sub').textContent = subs[sec];
+
+  const actions = document.getElementById('topbar-actions');
+  actions.innerHTML = '';
+
+  const content = document.getElementById('main-content');
+
+  if (sec === 'home') {
+    const rptBtn = document.createElement('button');
+    rptBtn.className = 'btn btn-secondary';
+    rptBtn.textContent = '📊 Reporte';
+    rptBtn.onclick = () => openReporteModal();
+    actions.appendChild(rptBtn);
+    const newBtn = document.createElement('button');
+    newBtn.className = 'btn btn-primary';
+    newBtn.textContent = '+ Nuevo contenido';
+    newBtn.onclick = () => openContenidoModal(null);
+    actions.appendChild(newBtn);
+    renderHome(content); setTimeout(refreshIcons, 50);
+  }
+  else if (sec === 'cuentas') { renderCuentas(content); }
+  else if (sec === 'dashboard') { renderDashboard(content); setTimeout(refreshIcons, 50); }
+  else if (sec === 'contenidos') {
+    const plantillaBtn = document.createElement('a');
+    plantillaBtn.className = 'btn btn-secondary';
+    plantillaBtn.innerHTML = ico('file-spreadsheet') + ' Plantilla Excel';
+    plantillaBtn.href = 'plantillas/Plantilla_Contenidos_Hub_COSMART.xlsx';
+    plantillaBtn.setAttribute('download', 'Plantilla_Contenidos_Hub_COSMART.xlsx');
+    plantillaBtn.title = 'Descargar la plantilla vacía para cargar el calendario de contenidos';
+    actions.appendChild(plantillaBtn);
+    const importBtn = document.createElement('button');
+    importBtn.className = 'btn btn-secondary';
+    importBtn.innerHTML = ico('download') + ' Importar Excel';
+    importBtn.onclick = () => openImportModal();
+    actions.appendChild(importBtn);
+    const exportBtn = document.createElement('button');
+    exportBtn.className = 'btn btn-secondary';
+    exportBtn.innerHTML = ico('upload') + ' Exportar Excel';
+    exportBtn.title = 'Bajar el calendario de contenidos cargado, con las mismas columnas que la plantilla';
+    exportBtn.onclick = () => exportarContenidosExcel();
+    actions.appendChild(exportBtn);
+    if (user.role !== 'client') {
+      const dupBtn = document.createElement('button');
+      dupBtn.className = 'btn btn-secondary';
+      dupBtn.textContent = '🧹 Duplicados';
+      dupBtn.title = 'Buscar contenidos cargados dos veces con el mismo título';
+      dupBtn.onclick = () => abrirDuplicadosContenidoModal();
+      actions.appendChild(dupBtn);
+      const quickBtn = document.createElement('button');
+      quickBtn.className = 'btn btn-secondary';
+      quickBtn.textContent = '⚡ Actualizar estado/notas';
+      quickBtn.title = 'Subí un Excel simple (Título + Estado/Notas/Comentario) para actualizar contenidos ya cargados sin tocar el resto de los campos';
+      quickBtn.onclick = () => openQuickUpdateModal();
+      actions.appendChild(quickBtn);
+    }
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary btn-rojo';
+    btn.textContent = '+ Nuevo contenido';
+    btn.onclick = () => openContenidoModal(null);
+    actions.appendChild(btn);
+    compactarAccionesMobile(actions);
+    renderContenidos(content);
+    setTimeout(refreshIcons, 50);
+  }
+  else if (sec === 'guiones') {
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'form-control';
+    searchInput.placeholder = 'Buscar por título...';
+    searchInput.style.cssText = 'width:180px;font-size:12px;padding:6px 10px;';
+    searchInput.value = _guionesBusqueda;
+    searchInput.oninput = (e) => { _guionesBusqueda = e.target.value.trim().toLowerCase(); renderSection('guiones'); };
+    actions.appendChild(searchInput);
+    const traerBtn = document.createElement('button');
+    traerBtn.className = 'btn btn-secondary';
+    traerBtn.innerHTML = ico('download') + ' Traer desde un contenido';
+    traerBtn.title = 'Copiar el guion ya escrito en un contenido existente a este repositorio';
+    traerBtn.onclick = () => openTraerGuionModal();
+    actions.appendChild(traerBtn);
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.textContent = '+ Nuevo guion';
+    btn.onclick = () => openGuionModal(null);
+    actions.appendChild(btn);
+    compactarAccionesMobile(actions);
+    renderGuionesSection(content);
+    setTimeout(refreshIcons, 50);
+  }
+  else if (sec === 'tareas') {
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'form-control';
+    searchInput.placeholder = '🔎 Buscar tarea...';
+    searchInput.style.cssText = 'width:160px;font-size:12px;padding:6px 10px;';
+    searchInput.value = _tareasBusqueda;
+    searchInput.oninput = (e) => { _tareasBusqueda = e.target.value.trim().toLowerCase(); refreshTareasView(); };
+    actions.appendChild(searchInput);
+    const filtroAsignado = document.createElement('select');
+    filtroAsignado.className = 'form-control';
+    filtroAsignado.style.cssText = 'width:auto;font-size:12px;padding:6px 10px;';
+    filtroAsignado.innerHTML = '<option value="">👤 Todos</option>' + opcionesFiltroAsignadoTareas() + '<option value="_sin_asignar">Sin asignar</option>';
+    filtroAsignado.value = _tareasFiltroAsignado;
+    filtroAsignado.onchange = (e) => { _tareasFiltroAsignado = e.target.value; refreshTareasView(); };
+    actions.appendChild(filtroAsignado);
+    const filtroPrioridad = document.createElement('select');
+    filtroPrioridad.className = 'form-control';
+    filtroPrioridad.style.cssText = 'width:auto;font-size:12px;padding:6px 10px;';
+    filtroPrioridad.innerHTML = '<option value="">Prioridad: todas</option><option>Alta</option><option>Media</option><option>Baja</option>';
+    filtroPrioridad.value = _tareasFiltroPrioridad;
+    filtroPrioridad.onchange = (e) => { _tareasFiltroPrioridad = e.target.value; refreshTareasView(); };
+    actions.appendChild(filtroPrioridad);
+    const filtroFecha = document.createElement('select');
+    filtroFecha.className = 'form-control';
+    filtroFecha.style.cssText = 'width:auto;font-size:12px;padding:6px 10px;';
+    filtroFecha.innerHTML = '<option value="">Vencimiento: todas</option><option value="hoy">Hoy</option><option value="semana">Esta semana</option><option value="mes">Este mes</option><option value="sinfecha">Sin fecha</option>';
+    filtroFecha.value = _tareasFiltroFecha;
+    filtroFecha.onchange = (e) => { _tareasFiltroFecha = e.target.value; refreshTareasView(); };
+    actions.appendChild(filtroFecha);
+    const ordenSel = document.createElement('select');
+    ordenSel.className = 'form-control';
+    ordenSel.style.cssText = 'width:auto;font-size:12px;padding:6px 10px;';
+    ordenSel.innerHTML = '<option value="fecha">Ordenar por: fecha</option><option value="prioridad">Ordenar por: prioridad</option>';
+    ordenSel.value = _tareasOrden;
+    ordenSel.onchange = (e) => { _tareasOrden = e.target.value; refreshTareasView(); };
+    actions.appendChild(ordenSel);
+    if (_tareasBusqueda || _tareasFiltroAsignado || _tareasFiltroPrioridad || _tareasFiltroFecha || _tareasOrden !== 'fecha') {
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'btn btn-secondary btn-sm';
+      clearBtn.title = 'Limpiar todos los filtros';
+      clearBtn.textContent = '✕ Limpiar filtros';
+      clearBtn.onclick = () => { _tareasBusqueda = ''; _tareasFiltroAsignado = ''; _tareasFiltroPrioridad = ''; _tareasFiltroFecha = ''; _tareasOrden = 'fecha'; renderSection('tareas'); };
+      actions.appendChild(clearBtn);
+    }
+    const viewKanbanBtn = document.createElement('button');
+    viewKanbanBtn.className = 'btn btn-sm ' + (_tareasView === 'kanban' ? 'btn-primary' : 'btn-secondary');
+    viewKanbanBtn.innerHTML = '<i data-lucide="columns" style="width:14px;height:14px;"></i> Kanban';
+    viewKanbanBtn.onclick = () => { _tareasView = 'kanban'; renderSection('tareas'); };
+    actions.appendChild(viewKanbanBtn);
+    const viewCalBtn = document.createElement('button');
+    viewCalBtn.className = 'btn btn-sm ' + (_tareasView === 'calendario' ? 'btn-primary' : 'btn-secondary');
+    viewCalBtn.innerHTML = '<i data-lucide="calendar" style="width:14px;height:14px;"></i> Calendario de tareas';
+    viewCalBtn.onclick = () => { _tareasView = 'calendario'; renderSection('tareas'); };
+    actions.appendChild(viewCalBtn);
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.textContent = '+ Nueva tarea';
+    btn.onclick = () => openTareaModal(null);
+    actions.appendChild(btn);
+    if (_tareasView === 'calendario') renderTareasCalendario(content);
+    else renderTareas(content);
+    setTimeout(refreshIcons, 50);
+  }
+  else if (sec === 'pauta') {
+    const importBtn = document.createElement('button');
+    importBtn.className = 'btn btn-secondary';
+    importBtn.textContent = '📥 Importar Excel';
+    importBtn.onclick = () => openImportCampanasModal();
+    actions.appendChild(importBtn);
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.textContent = '+ Nueva campaña';
+    btn.onclick = () => openCampanaModal(null);
+    actions.appendChild(btn);
+    renderPauta(content);
+    setTimeout(refreshIcons, 50);
+  }
+  else if (sec === 'links') {
+    const linkBtn = document.createElement('button');
+    linkBtn.className = 'btn btn-secondary';
+    linkBtn.textContent = '+ Nuevo link';
+    linkBtn.onclick = () => openLinkModal(null);
+    actions.appendChild(linkBtn);
+    const archivoBtn = document.createElement('button');
+    archivoBtn.className = 'btn btn-primary';
+    archivoBtn.textContent = '+ Nuevo archivo';
+    archivoBtn.onclick = () => openArchivoModal(null);
+    actions.appendChild(archivoBtn);
+    content.innerHTML = `
+      <div class="links-archivos-split">
+        <div class="links-archivos-col">
+          <h3 class="links-archivos-col-title"><i data-lucide="link" style="width:15px;height:15px;"></i> Links</h3>
+          <div id="links-col-body"></div>
+        </div>
+        <div class="links-archivos-col">
+          <h3 class="links-archivos-col-title"><i data-lucide="folder-open" style="width:15px;height:15px;"></i> Archivos</h3>
+          <div id="archivos-col-body"></div>
+        </div>
+      </div>
+      <button class="btn btn-primary contactos-fab" onclick="openEquipoModal()">
+        <i data-lucide="contact" style="width:16px;height:16px;"></i> Contactos
+      </button>
+    `;
+    renderLinks(document.getElementById('links-col-body'));
+    renderArchivos(document.getElementById('archivos-col-body'));
+    setTimeout(refreshIcons, 50);
+  }
+  else if (sec === 'web') {
+    const siteUrl = STATE.client.website || STATE.client.sitioWeb;
+    if (siteUrl) {
+      const verBtn = document.createElement('a');
+      verBtn.className = 'btn btn-secondary';
+      verBtn.textContent = '🌐 Ver sitio web';
+      verBtn.href = siteUrl.startsWith('http') ? siteUrl : 'https://' + siteUrl;
+      verBtn.target = '_blank';
+      actions.appendChild(verBtn);
+    }
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.textContent = '+ Nueva tarea web';
+    btn.onclick = () => openWebTaskModal(null);
+    actions.appendChild(btn);
+    renderWeb(content);
+    setTimeout(refreshIcons, 50);
+  }
+  else if (sec === 'plan') {
+    if (user.role !== 'client') {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-primary';
+      btn.textContent = STATE.plan?.html ? '↻ Actualizar plan' : '+ Cargar plan';
+      btn.onclick = openPlanModal;
+      actions.appendChild(btn);
+    }
+    renderPlan(content);
+  }
+  else if (sec === 'reportes') {
+    if (user.role !== 'client') {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-primary';
+      btn.textContent = '+ Subir reporte';
+      btn.onclick = () => openReporteMensualModal();
+      actions.appendChild(btn);
+    }
+    renderReportes(content);
+  }
+  else if (sec === 'instrucciones') {
+    renderInstrucciones(content);
+    setTimeout(refreshIcons, 50);
+  }
+}
+
+function renderPlan(container) {
+  const html = (STATE.plan && STATE.plan.html) || '';
+  if (!html) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📄</div><h3>Sin plan cargado</h3><p>${user.role !== 'client' ? 'Usá "+ Cargar plan" arriba para subir el HTML del plan de ejecución.' : 'Todavía no hay un plan de ejecución para este cliente.'}</p></div>`;
+    return;
+  }
+  container.innerHTML = `<iframe id="plan-frame" style="width:100%;min-height:calc(100vh - 160px);border:none;border-radius:12px;background:#0b0b0f;" sandbox="allow-same-origin allow-scripts allow-popups"></iframe>`;
+  const frame = document.getElementById('plan-frame');
+  frame.srcdoc = html;
+  frame.addEventListener('load', () => {
+    try {
+      const doc = frame.contentDocument;
+      const resize = () => { frame.style.height = doc.documentElement.scrollHeight + 'px'; };
+      resize();
+      new ResizeObserver(resize).observe(doc.body);
+
+      // El menú interno del plan usa anchors (#seccion). Como el iframe no
+      // tiene scroll propio (mide el alto exacto del contenido), el salto
+      // nativo del navegador termina llevando a la página entera al tope
+      // del iframe (el header) en vez de a la sección clickeada. Corregimos
+      // scrolleando la página exterior a la posición real de esa sección.
+      const irASeccion = () => {
+        const hash = frame.contentWindow.location.hash;
+        if (!hash) return;
+        let target;
+        try { target = doc.querySelector(hash); } catch (e) { return; }
+        if (!target) return;
+        const rect = target.getBoundingClientRect();
+        const frameRect = frame.getBoundingClientRect();
+        const destino = window.scrollY + frameRect.top + rect.top - 80;
+        window.scrollTo({ top: destino, behavior: 'smooth' });
+      };
+      frame.contentWindow.addEventListener('hashchange', irASeccion);
+    } catch (e) {}
+  });
+}
+
+window.openPlanModal = function() {
+  document.getElementById('plan-file-input').value = '';
+  document.getElementById('plan-file-name').textContent = '';
+  document.getElementById('planSaveBtn').disabled = true;
+  window._planHtmlPendiente = null;
+  document.getElementById('planModal').classList.remove('hidden');
+};
+
+// ── Reportes mensuales (misma idea que Plan de ejecución, pero uno por
+// mes en vez de un único documento -- pedido de Vaneh (11/09): "todos los
+// meses tengo que subir un reporte nuevo y se tiene que poder visualizar
+// los meses anteriores también si tocan para ir a ese otro mes"). ──
+let _reporteMesSeleccionado = null;
+function mesLabel(mesStr) {
+  const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const [y, m] = (mesStr || '').split('-').map(Number);
+  return (m >= 1 && m <= 12) ? `${meses[m - 1]} ${y}` : mesStr;
+}
+async function renderReportes(container) {
+  if (!STATE.reportes.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📊</div><h3>Sin reportes cargados</h3><p>${user.role !== 'client' ? 'Usá "+ Subir reporte" arriba para cargar el HTML del reporte de un mes.' : 'Todavía no hay reportes cargados para este cliente.'}</p></div>`;
+    return;
+  }
+  if (!_reporteMesSeleccionado || !STATE.reportes.some(r => r.mes === _reporteMesSeleccionado)) {
+    _reporteMesSeleccionado = STATE.reportes[0].mes; // ya viene ordenado, más nuevo primero
+  }
+  const actual = STATE.reportes.find(r => r.mes === _reporteMesSeleccionado);
+  container.innerHTML = `
+    <div class="flex items-center gap-8" style="flex-wrap:wrap;margin-bottom:14px;justify-content:space-between;">
+      <div class="tabs">
+        ${STATE.reportes.map(r => `<button class="tab-btn ${r.mes === _reporteMesSeleccionado ? 'active' : ''}" onclick="verReporteDeMes('${r.mes}')">${r.origen === 'informe-mensual' ? '📈 ' : ''}${mesLabel(r.mes)}</button>`).join('')}
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="descargarReporteActual()">⬇️ Descargar</button>
+    </div>
+    <div id="reporte-frame-wrap"></div>
+  `;
+  const wrap = document.getElementById('reporte-frame-wrap');
+  // El html de cada mes se pide aparte (no viene en STATE.reportes de
+  // entrada) para no volver lento el arranque del Hub a medida que se
+  // acumulan meses -- se cachea en el mismo objeto una vez pedido.
+  if (actual.html == null) {
+    wrap.innerHTML = `<div class="empty-state"><p>Cargando reporte...</p></div>`;
+    let html;
+    try {
+      html = await getReporteHtml(clientId, actual.mes);
+    } catch (e) {
+      wrap.innerHTML = `<div class="empty-state"><p>No se pudo cargar el reporte.</p></div>`;
+      return;
+    }
+    if (_reporteMesSeleccionado !== actual.mes) return; // se cambió de mes mientras cargaba
+    // Si vuelve vacío no lo guardamos como "ya cargado" -- antes quedaba
+    // cacheado como '' para siempre (no es null) y el iframe se mostraba
+    // vacío, un rectángulo negro sin ninguna explicación (el color de
+    // fondo del propio iframe). Mejor avisar claro y permitir reintentar.
+    if (!html) {
+      wrap.innerHTML = `<div class="empty-state"><p>Este mes todavía no tiene un reporte cargado. Probá volver a entrar en unos segundos o subilo de nuevo.</p></div>`;
+      return;
+    }
+    actual.html = html;
+  }
+  wrap.innerHTML = `<iframe id="reporte-frame" style="width:100%;min-height:calc(100vh - 220px);border:none;border-radius:12px;background:#0b0b0f;" sandbox="allow-same-origin allow-scripts allow-popups"></iframe>`;
+  const frame = document.getElementById('reporte-frame');
+  frame.srcdoc = actual.html;
+  frame.addEventListener('load', () => {
+    try {
+      const doc = frame.contentDocument;
+      const resize = () => { frame.style.height = doc.documentElement.scrollHeight + 'px'; };
+      resize();
+      new ResizeObserver(resize).observe(doc.body);
+    } catch (e) {}
+  });
+}
+// "archivo descargable" (pedido de Vaneh, 28/09) -- el reporte ya se ve
+// en pantalla dentro del iframe, esto lo baja como un .html standalone
+// (mismo contenido, se abre solo en cualquier navegador) para que lo
+// pueda guardar/mandar/presentar sin depender de tener el Hub abierto.
+window.descargarReporteActual = function() {
+  const actual = STATE.reportes.find(r => r.mes === _reporteMesSeleccionado);
+  if (!actual || !actual.html) { alert('Todavía se está cargando el reporte, esperá un segundo y probá de nuevo.'); return; }
+  const blob = new Blob([actual.html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Reporte_${(STATE.client?.nombre || STATE.client?.name || clientId || 'cliente').replace(/[^a-z0-9]+/gi, '_')}_${mesLabel(actual.mes).replace(/\s+/g, '_')}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
+window.verReporteDeMes = function(mes) {
+  _reporteMesSeleccionado = mes;
+  renderSection('reportes');
+};
+
+window.openReporteMensualModal = function() {
+  document.getElementById('reporte-file-input').value = '';
+  document.getElementById('reporte-file-name').textContent = '';
+  document.getElementById('reporteSaveBtn').disabled = true;
+  window._reporteHtmlPendiente = null;
+  const mesInput = document.getElementById('reporte-mes-input');
+  mesInput.value = _reporteMesSeleccionado || new Date().toISOString().slice(0, 7);
+  document.getElementById('reporteMensualModal').classList.remove('hidden');
+};
+
+document.getElementById('reporte-file-input')?.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    window._reporteHtmlPendiente = reader.result;
+    document.getElementById('reporte-file-name').textContent = `✓ ${file.name} (${(file.size / 1024).toFixed(0)} KB)`;
+    document.getElementById('reporteSaveBtn').disabled = false;
+  };
+  reader.onerror = () => alert('No se pudo leer el archivo.');
+  reader.readAsText(file);
+});
+
+document.getElementById('closeReporteMensualModal')?.addEventListener('click', () => document.getElementById('reporteMensualModal').classList.add('hidden'));
+document.getElementById('closeReporteMensualModal2')?.addEventListener('click', () => document.getElementById('reporteMensualModal').classList.add('hidden'));
+document.getElementById('reporteSaveBtn')?.addEventListener('click', async () => {
+  const mes = document.getElementById('reporte-mes-input').value;
+  if (!mes) { alert('Elegí el mes del reporte.'); return; }
+  if (!window._reporteHtmlPendiente) return;
+  const btn = document.getElementById('reporteSaveBtn');
+  btn.disabled = true; btn.textContent = 'Guardando...';
+  try {
+    await saveReporteHtml(clientId, mes, window._reporteHtmlPendiente);
+    // Ojo: acá se arma el índice que se persiste (liviano, sin el html de
+    // cada mes -- eso vive aparte en `reporte-YYYY-MM`), pero hay que
+    // preservar `origen` de los otros meses (si no, el badge 📈 de un
+    // informe automático desaparece en cuanto se sube un reporte manual
+    // de OTRO mes) y el `.html` ya cacheado en memoria (si no, cambiar de
+    // mes fuerza un refetch innecesario de un mes que no se tocó).
+    const cacheHtmlPorMes = {};
+    STATE.reportes.forEach(r => { if (r.html != null) cacheHtmlPorMes[r.mes] = r.html; });
+    const otrosDelIndice = STATE.reportes.filter(r => r.mes !== mes).map(r => ({ mes: r.mes, subidoEn: r.subidoEn, ...(r.origen ? { origen: r.origen } : {}) }));
+    const nuevoIndice = [...otrosDelIndice, { mes, subidoEn: new Date().toISOString() }];
+    await saveReportesIndice(clientId, nuevoIndice);
+    STATE.reportes = nuevoIndice.slice().sort((a, b) => (a.mes < b.mes ? 1 : -1));
+    STATE.reportes.forEach(r => { if (cacheHtmlPorMes[r.mes] != null) r.html = cacheHtmlPorMes[r.mes]; });
+    STATE.reportes.find(r => r.mes === mes).html = window._reporteHtmlPendiente; // ya lo tenemos, no hace falta pedirlo de nuevo
+    _reporteMesSeleccionado = mes;
+    document.getElementById('nav-reportes')?.classList.remove('hidden');
+    document.getElementById('reporteMensualModal').classList.add('hidden');
+    renderSection('reportes');
+  } catch (e) {
+    alert('Error al guardar el reporte: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Guardar';
+  }
+});
+
+document.getElementById('plan-file-input')?.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    window._planHtmlPendiente = reader.result;
+    document.getElementById('plan-file-name').textContent = `✓ ${file.name} (${(file.size / 1024).toFixed(0)} KB)`;
+    document.getElementById('planSaveBtn').disabled = false;
+  };
+  reader.onerror = () => alert('No se pudo leer el archivo.');
+  reader.readAsText(file);
+});
+
+document.getElementById('closePlanModal')?.addEventListener('click', () => document.getElementById('planModal').classList.add('hidden'));
+document.getElementById('closePlanModal2')?.addEventListener('click', () => document.getElementById('planModal').classList.add('hidden'));
+document.getElementById('planSaveBtn')?.addEventListener('click', async () => {
+  if (!window._planHtmlPendiente) return;
+  const btn = document.getElementById('planSaveBtn');
+  btn.disabled = true; btn.textContent = 'Guardando...';
+  try {
+    await savePlan(clientId, window._planHtmlPendiente);
+    STATE.plan = { html: window._planHtmlPendiente };
+    document.getElementById('nav-plan')?.classList.remove('hidden');
+    document.getElementById('planModal').classList.add('hidden');
+    renderSection('plan');
+  } catch (e) {
+    alert('Error al guardar el plan: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Guardar';
+  }
+});
+
+// ──────────────────────────────────────────────────────
+// DASHBOARD EDITORIAL
+// ──────────────────────────────────────────────────────
+let dashYear = new Date().getFullYear();
+let dashMonth = new Date().getMonth(); // 0-based
+
+function buildPieChart(tipos, COLORS, sideExtraHtml) {
+  const entries = Object.entries(tipos).filter(function(e){ return e[1] > 0; }).sort(function(a,b){ return b[1]-a[1]; });
+  if (!entries.length) {
+    if (!sideExtraHtml) return '';
+    return '<div class="dash-card" style="margin-top:14px;">'
+      + '<div class="dash-card-title">Distribución por tipo</div>'
+      + '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">'
+      + '<div style="font-size:12px;color:var(--text-muted);">Sin datos este mes</div>'
+      + sideExtraHtml
+      + '</div></div>';
+  }
+  var totalT = entries.reduce(function(s,e){ return s+e[1]; }, 0);
+  var angle = -Math.PI/2;
+  var CX=90, CY=90, R=70;
+  var paths='', labels='', legend='';
+  entries.forEach(function(entry, i) {
+    var lbl = entry[0], val = entry[1];
+    var slice = (val/totalT)*Math.PI*2;
+    var x1 = CX + R*Math.cos(angle), y1 = CY + R*Math.sin(angle);
+    var x2 = CX + R*Math.cos(angle+slice), y2 = CY + R*Math.sin(angle+slice);
+    var large = slice > Math.PI ? 1 : 0;
+    var midA = angle + slice/2;
+    var lx = +(CX + R*0.65*Math.cos(midA)).toFixed(1);
+    var ly = +(CY + R*0.65*Math.sin(midA)).toFixed(1);
+    var pct = Math.round(val/totalT*100);
+    var col = COLORS[i % COLORS.length];
+    paths += '<path d="M'+CX+','+CY+' L'+x1.toFixed(1)+','+y1.toFixed(1)+' A'+R+','+R+' 0 '+large+',1 '+x2.toFixed(1)+','+y2.toFixed(1)+' Z" fill="'+col+'" stroke="#fff" stroke-width="1.5"/>';
+    if (pct >= 8) labels += '<text x="'+lx+'" y="'+ly+'" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="#fff" font-weight="700">'+pct+'%</text>';
+    legend += '<div style="display:flex;align-items:center;gap:5px;font-size:11px;"><span style="width:10px;height:10px;border-radius:2px;flex-shrink:0;background:'+col+';display:inline-block;"></span>'+lbl+' ('+val+')</div>';
+    angle += slice;
+  });
+  return '<div class="dash-card" style="margin-top:14px;">'
+    + '<div class="dash-card-title">Distribución por tipo</div>'
+    + '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">'
+    + '<svg viewBox="0 0 180 180" width="130" height="130" style="flex-shrink:0;">'+paths+labels+'</svg>'
+    + '<div style="display:flex;flex-direction:column;gap:4px;">'+legend+'</div>'
+    + (sideExtraHtml || '')
+    + '</div></div>';
+}
+
+function renderDashboard(container) {
+  const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const DIAS = ['L','M','Mi','J','V','S','D'];
+  const yearStr = dashYear;
+  const monthStr = String(dashMonth + 1).padStart(2, '0');
+  const prefix = `${yearStr}-${monthStr}`;
+
+  const conts = STATE.contenidos.filter(c => c.fechaPub && c.fechaPub.startsWith(prefix));
+
+  // ── STAT PILLS ──
+  const total = conts.length;
+  const publicados = conts.filter(c => c.estado === 'Publicado').length;
+  const programados = conts.filter(c => c.estado === 'Programado').length;
+  const enProceso = conts.filter(c => ['En proceso','Revisión','Aprobado'].includes(c.estado)).length;
+
+  // ── TAREAS (general + sitio web) — resumen chico, va al lado del gráfico de torta ──
+  const tareasActivas = tareasVisibles(STATE.tareas).filter(t => !t.archivado);
+  const tareasPendientes = tareasActivas.filter(t => t.estado === 'Sin empezar').length;
+  const tareasEnProceso = tareasActivas.filter(t => t.estado === 'En progreso').length;
+  const tareasListas = tareasActivas.filter(t => t.estado === 'Listo').length;
+  const webTareas = STATE.home.webTareas || [];
+  const webPendientes = webTareas.filter(t => t.estado === 'Pendiente').length;
+  const webEnProceso = webTareas.filter(t => t.estado === 'En proceso' || t.estado === 'En revisión').length;
+  const webListas = webTareas.filter(t => t.estado === 'Listo').length;
+  const tareasResumenHtml = `
+    <div style="display:flex;flex-direction:column;gap:8px;margin-left:auto;min-width:150px;">
+      <div>
+        <div class="dash-card-title" style="margin-bottom:4px;">Tareas</div>
+        <div style="display:flex;gap:8px;font-size:11px;flex-wrap:wrap;">
+          <span style="color:#94a3b8;">${tareasPendientes} sin empezar</span>
+          <span style="color:#f59e0b;">${tareasEnProceso} en progreso</span>
+          <span style="color:#10b981;">${tareasListas} listas</span>
+        </div>
+      </div>
+      <div>
+        <div class="dash-card-title" style="margin-bottom:4px;">Tareas sitio web</div>
+        <div style="display:flex;gap:8px;font-size:11px;flex-wrap:wrap;">
+          <span style="color:#94a3b8;">${webPendientes} pendientes</span>
+          <span style="color:#f59e0b;">${webEnProceso} en proceso</span>
+          <span style="color:#10b981;">${webListas} listas</span>
+        </div>
+      </div>
+    </div>`;
+
+  // ── FORMATO breakdown ──
+  const formatos = { Imagen: 0, Video: 0, Reel: 0, Carrusel: 0, Story: 0, GIF: 0 };
+  conts.forEach(c => { const fmts = Array.isArray(c.formato) ? c.formato : (c.formato ? [c.formato] : []); fmts.forEach(f => { formatos[f] = (formatos[f]||0)+1; }); });
+  const maxFormato = Math.max(1, ...Object.values(formatos));
+
+  // ── TIPO breakdown ──
+  const tipos = {};
+  conts.forEach(c => { const t = c.tipo || 'Sin tipo'; tipos[t] = (tipos[t]||0)+1; });
+  const maxTipo = Math.max(1, ...Object.values(tipos));
+
+  // ── EJE breakdown ──
+  const ejes = {};
+  conts.forEach(c => { const e = c.eje || 'Sin eje'; ejes[e] = (ejes[e]||0)+1; });
+  const maxEje = Math.max(1, ...Object.values(ejes));
+
+  // ── FRECUENCIA SEMANAL ──
+  // Build weeks: group days of month into S1..S4 by week-of-month
+  const daysInMonth = new Date(dashYear, dashMonth + 1, 0).getDate();
+  // For each week (S1-S4), collect Mon-Sun buckets
+  const weeks = [[], [], [], []]; // each: [L,M,Mi,J,V,S,D] count
+  for (let w = 0; w < 4; w++) weeks[w] = [0,0,0,0,0,0,0];
+  // day 1..daysInMonth
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(dashYear, dashMonth, d);
+    const dow = (date.getDay() + 6) % 7; // 0=Mon..6=Sun
+    const weekIdx = Math.min(3, Math.floor((d - 1) / 7));
+    const dateStr = `${yearStr}-${monthStr}-${String(d).padStart(2,'0')}`;
+    const count = conts.filter(c => c.fechaPub === dateStr).length;
+    weeks[weekIdx][dow] += count;
+  }
+
+  // ── BAR CHART helper ──
+  const COLORS = ['#3A8FC7','#1A4DAA','#10b981','#f59e0b','#ec4899','#8b5cf6','#e02020'];
+  function barRows(data, maxVal) {
+    return Object.entries(data).filter(([,v]) => v > 0).sort((a,b) => b[1]-a[1]).map(([label, val], i) =>
+      `<div class="dash-bar-row">
+        <div class="dash-bar-label">${label}</div>
+        <div class="dash-bar-track"><div class="dash-bar-fill" style="width:${Math.round(val/maxVal*100)}%;background:${COLORS[i%COLORS.length]}"></div></div>
+        <div class="dash-bar-val">${val}</div>
+      </div>`
+    ).join('');
+  }
+
+  function freqCell(n) {
+    if (n === 0) return `<td><span class="freq-cell-0">·</span></td>`;
+    const cls = n === 1 ? 'freq-cell-1' : n === 2 ? 'freq-cell-2' : n === 3 ? 'freq-cell-3' : 'freq-cell-many';
+    return `<td><span class="${cls}">${n}</span></td>`;
+  }
+
+  const freqRows = weeks.map((week, wi) => {
+    const weekTotal = week.reduce((s,v) => s+v, 0);
+    if (wi > 0 && weeks.slice(0,wi).every(w => w.reduce((s,v)=>s+v,0) === 0) && weekTotal === 0) return '';
+    return `
+      <tr>
+        <td class="cat-label week-sep" style="color:var(--primary);font-weight:700;">S${wi+1}</td>
+        ${week.map(n => `<td class="week-sep">${n > 0 ? `<span class="${n===1?'freq-cell-1':n===2?'freq-cell-2':n===3?'freq-cell-3':'freq-cell-many'}">${n}</span>` : '<span class="freq-cell-0">·</span>'}</td>`).join('')}
+        <td class="week-sep" style="font-weight:700;color:var(--primary);font-size:11px;">${weekTotal}</td>
+      </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="dash-header">
+      <div>
+        <div class="dash-title">Dashboard Calendario Editorial</div>
+        <div class="dash-meta">Cliente: <strong>${STATE.client.nombre || STATE.client.name || clientId}</strong></div>
+      </div>
+      <div class="dash-month-nav">
+        <button onclick="dashNavMonth(-1)">‹</button>
+        <div class="dash-month-label">${MESES[dashMonth]} ${dashYear}</div>
+        <button onclick="dashNavMonth(1)">›</button>
+      </div>
+    </div>
+
+    <div class="dash-stat-row">
+      <div class="dash-stat-pill"><div class="dash-stat-pill-val">${total}</div><div class="dash-stat-pill-label">Total del mes</div></div>
+      <div class="dash-stat-pill"><div class="dash-stat-pill-val" style="color:#22c55e">${publicados}</div><div class="dash-stat-pill-label">Publicados</div></div>
+      <div class="dash-stat-pill"><div class="dash-stat-pill-val" style="color:#3b82f6">${programados}</div><div class="dash-stat-pill-label">Programados</div></div>
+      <div class="dash-stat-pill"><div class="dash-stat-pill-val" style="color:#f59e0b">${enProceso}</div><div class="dash-stat-pill-label">En proceso</div></div>
+    </div>
+
+    <div class="dash-layout">
+      <div>
+        <div class="dash-card">
+          <div class="dash-card-title">Frecuencia de contenidos</div>
+          <table class="freq-grid">
+            <thead>
+              <tr>
+                <th class="week-header">Semana</th>
+                ${DIAS.map(d => `<th>${d}</th>`).join('')}
+                <th>Tot.</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${freqRows || `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px;font-size:12px;">Sin contenidos este mes</td></tr>`}
+              <tr style="border-top:2px solid var(--border);">
+                <td class="cat-label" style="font-weight:700;color:var(--text-muted);">Total</td>
+                ${[0,1,2,3,4,5,6].map(d => {
+                  const tot = weeks.reduce((s,w) => s+w[d], 0);
+                  return `<td style="font-weight:${tot?'700':'400'};color:${tot?'var(--primary)':'#cbd5e1'};font-size:11px;">${tot||'·'}</td>`;
+                }).join('')}
+                <td style="font-weight:700;color:var(--primary);font-size:12px;">${total}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:10px;color:var(--text-muted);">
+            <span>Menos contenido</span>
+            <span class="freq-cell-0" style="padding:1px 6px;">·</span>
+            <span class="freq-cell-1" style="padding:1px 6px;">1</span>
+            <span class="freq-cell-2" style="padding:1px 6px;">2</span>
+            <span class="freq-cell-3" style="padding:1px 6px;">3</span>
+            <span class="freq-cell-many" style="padding:1px 6px;">4+</span>
+            <span>Más contenido</span>
+          </div>
+        </div>
+        <!-- Gráfico de torta por tipo -->
+        ${buildPieChart(tipos, COLORS, '')}
+        ${renderTrabajoRealizado()}
+      </div>
+
+      <div>
+        <div class="dash-card">
+          <div class="dash-card-title">Formato de contenidos</div>
+          ${Object.values(formatos).some(v=>v>0) ? barRows(formatos, maxFormato) : '<div style="font-size:12px;color:var(--text-muted)">Sin datos</div>'}
+        </div>
+        <div class="dash-card">
+          <div class="dash-card-title">Eje de comunicación</div>
+          ${Object.keys(ejes).length ? barRows(ejes, maxEje) : '<div style="font-size:12px;color:var(--text-muted)">Sin datos</div>'}
+        </div>
+        <div class="dash-card">
+          <div class="dash-card-title">Tipo de contenido</div>
+          ${Object.keys(tipos).length ? barRows(tipos, maxTipo) : '<div style="font-size:12px;color:var(--text-muted)">Sin datos</div>'}
+        </div>
+      </div>
+    </div>
+  `;
+
+}
+
+function getTrabajoRealizadoMes(year, month) {
+  const prefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+  const inicioMes = new Date(year, month, 1);
+  const finMes = new Date(year, month + 1, 0);
+  const items = [];
+  const tareasBase = []; // esta app no tiene tareas
+  // Una tarea recurrente ya reactivada (ver reactivarTareasRecurrentes en
+  // el worker) vuelve a tener completadoEn en null -- el completado de
+  // este mes puede vivir en historialCompletados en vez del campo "en
+  // vivo". Pedido de Vaneh: ese historial tiene que verse acá y en el
+  // informe mensual, si no "no hay cómo mostrarlo" una vez que se
+  // reactiva. El historial no se filtra por visibleParaCliente porque es
+  // un hecho pasado (si se completó, en su momento sí se mostró).
+  tareasBase.forEach(t => {
+    const fechas = [];
+    if (t.estado === 'Listo' && t.completadoEn) fechas.push(t.completadoEn);
+    (t.historialCompletados || []).forEach(f => fechas.push(f));
+    fechas.filter(f => f && f.startsWith(prefix)).forEach(f =>
+      items.push({ tipo: 'Tarea', icon: '✅', titulo: t.titulo, fecha: f }));
+  });
+  // Subtareas completadas -- avance parcial de una tarea que puede seguir
+  // abierta (no hace falta esperar a que TODA la tarea cierre para que el
+  // cliente vea que se está avanzando), pedido explícito de Vaneh. A
+  // propósito NO usa tareasBase/tareasVisibles acá: una tarea interna
+  // (visibleParaCliente=false) puede seguir sin mostrarse entera, pero el
+  // avance de sus subtareas sí tiene que verse -- si no, marcar una
+  // subtarea de una tarea todavía no marcada "visible para el cliente"
+  // nunca aparecía en Trabajo realizado.
+  [].forEach(t => (t.subtareas || []).forEach(s => {
+    const fechasSub = [];
+    if (s.done && s.completadoEn) fechasSub.push(s.completadoEn);
+    (s.historialCompletados || []).forEach(f => fechasSub.push(f));
+    fechasSub.filter(f => f && f.startsWith(prefix)).forEach(f =>
+      items.push({ tipo: 'Subtarea', icon: '✅', titulo: `${s.titulo} — de "${t.titulo}"`, fecha: f }));
+  }));
+  [].filter(t => t.estado === 'Listo' && t.completadoEn && t.completadoEn.startsWith(prefix)).forEach(t =>
+    items.push({ tipo: 'Sitio web', icon: '🌐', titulo: t.titulo, fecha: t.completadoEn }));
+  STATE.contenidos.filter(c => c.estado === 'Publicado' && c.fechaPub && c.fechaPub.startsWith(prefix)).forEach(c =>
+    items.push({ tipo: 'Contenido', icon: '📣', titulo: c.titulo, fecha: c.fechaPub }));
+  [].filter(camp => {
+    if (!camp.fechaInicio) return false;
+    // Pedido de Vaneh (07/09): "las subí pero no significa que estén
+    // cargadas" -- una campaña en Borrador (recién subida, sin datos
+    // reales todavía) no cuenta como trabajo realizado.
+    if (camp.estado === 'Borrador') return false;
+    const ini = new Date(camp.fechaInicio + 'T00:00:00');
+    const fin = camp.fechaFin ? new Date(camp.fechaFin + 'T00:00:00') : ini;
+    return ini <= finMes && fin >= inicioMes;
+  }).forEach(camp =>
+    items.push({ tipo: 'Pauta', icon: '📈', titulo: camp.nombre, fecha: camp.fechaInicio, rango: `${fmtDate(camp.fechaInicio)} → ${camp.fechaFin ? fmtDate(camp.fechaFin) : 'en curso'}` }));
+  items.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  return items;
+}
+
+function renderTrabajoRealizado() {
+  const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const items = getTrabajoRealizadoMes(dashYear, dashMonth);
+  const visibles = items.slice(0, 7);
+  const rowHtml = (it) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:15px;flex-shrink:0;">${it.icon}</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${it.titulo || ''}</div>
+        <div style="font-size:11px;color:var(--text-muted);">${it.tipo}${it.rango ? ' · ' + it.rango : (it.fecha ? ' · ' + fmtDate(it.fecha) : '')}</div>
+      </div>
+    </div>`;
+  return `
+    <div class="dash-card" style="margin-top:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <div class="dash-card-title" style="margin-bottom:0;">Trabajo realizado — ${MESES[dashMonth]} ${dashYear}</div>
+      </div>
+      ${items.length ? `
+        <div>${visibles.map(rowHtml).join('')}</div>
+        ${items.length > 7 ? `
+          <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:10px;font-weight:700;" onclick="verTodoTrabajoRealizado()">
+            👉 Tocá para ver el total de tareas (${items.length})
+          </button>` : ''}
+      ` : `<p style="font-size:12px;color:var(--text-muted);padding:8px 0;">Sin trabajo completado en este mes todavía.</p>`}
+    </div>`;
+}
+
+window.verTodoTrabajoRealizado = function() {
+  const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const items = getTrabajoRealizadoMes(dashYear, dashMonth);
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'trabajoRealizadoModal';
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  modal.innerHTML = `
+    <div class="modal" style="max-width:520px;max-height:80vh;display:flex;flex-direction:column;">
+      <div class="modal-header">
+        <h3>Trabajo realizado — ${MESES[dashMonth]} ${dashYear}</h3>
+        <button class="modal-close" onclick="document.getElementById('trabajoRealizadoModal').remove()">×</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;">
+        ${items.map(it => `
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+            <span style="font-size:15px;flex-shrink:0;">${it.icon}</span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;">${it.titulo || ''}</div>
+              <div style="font-size:11px;color:var(--text-muted);">${it.tipo}${it.rango ? ' · ' + it.rango : (it.fecha ? ' · ' + fmtDate(it.fecha) : '')}</div>
+            </div>
+          </div>
+        `).join('') || '<p style="font-size:12px;color:var(--text-muted);">Sin trabajo completado en este mes.</p>'}
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+};
+
+window.dashNavMonth = function(dir) {
+  dashMonth += dir;
+  if (dashMonth < 0) { dashMonth = 11; dashYear--; }
+  if (dashMonth > 11) { dashMonth = 0; dashYear++; }
+  const content = document.getElementById('main-content');
+  renderDashboard(content);
+};
+
+// ──────────────────────────────────────────────────────
+// HOME
+// ──────────────────────────────────────────────────────
+function renderHome(container) {
+  const { prioridades = [], todos = [] } = STATE.home || {};
+  const hoy = new Date();
+  const mesStr = hoy.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+  const diaStr = hoy.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  const pubMes = STATE.contenidos.filter(c => c.fechaPub && c.fechaPub.startsWith(hoy.toISOString().slice(0,7))).length;
+  const aprobados = STATE.contenidos.filter(c => c.estado === 'Aprobado').length;
+  const enProceso = STATE.contenidos.filter(c => c.estado === 'En proceso').length;
+  const publicados = STATE.contenidos.filter(c => c.estado === 'Publicado').length;
+
+  container.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;">
+      ${[
+        { label: 'Contenidos este mes', val: pubMes, icon: 'calendar' },
+        { label: 'En proceso', val: enProceso, icon: 'pen-line' },
+        { label: 'Aprobados', val: aprobados, icon: 'check-circle' },
+        { label: 'Publicados', val: publicados, icon: 'send' },
+      ].map(m => `
+        <div class="card" style="padding:16px;">
+          <i data-lucide="${m.icon}" class="stat-icon"></i>
+          <div style="font-size:24px;font-weight:800;">${m.val}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${m.label}</div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="home-grid">
+      <!-- Prioridades del mes -->
+      <div class="card">
+        <div class="card-header">
+          <i data-lucide="star" style="width:15px;height:15px;color:#f59e0b;stroke-width:1.75;"></i>
+          <h2>Prioridades de ${mesStr}</h2>
+          <button class="btn btn-secondary btn-sm" onclick="editPrioridades()" style="margin-left:auto;">Editar</button>
+        </div>
+        <div class="card-body">
+          ${prioridades.length ? `
+            <ul class="priorities-list" id="prio-list">
+              ${prioridades.map((p,i) => `
+                <li class="priority-item">
+                  <span class="priority-dot"></span>
+                  <span>${p}</span>
+                </li>
+              `).join('')}
+            </ul>
+          ` : `<p class="text-muted text-sm">Sin prioridades cargadas. Hacé clic en "Editar".</p>`}
+        </div>
+      </div>
+
+      <!-- To-do del día -->
+      <div class="card">
+        <div class="card-header">
+          <i data-lucide="check-square" style="width:15px;height:15px;color:var(--accent);stroke-width:1.75;"></i>
+          <h2>To-do — ${diaStr}</h2>
+          <button class="btn btn-secondary btn-sm" onclick="addTodoItem()" style="margin-left:auto;">+ Agregar</button>
+        </div>
+        <div class="card-body">
+          <div id="todo-list">
+            ${(() => {
+              const tareasPend = tareasVisibles(STATE.tareas).filter(t => t.estado === 'Sin empezar' && !t.archivado);
+              const allItems = [
+                ...todos.map(t => ({ type:'todo', ...t })),
+                ...tareasPend.map(t => ({ type:'tarea', id: t.id, text: t.titulo, done: false, tarea: t }))
+              ];
+              // Orden cronológico por fecha de vencimiento -- pedido de Vaneh
+              // (11/09). Los to-do manuales no tienen fecha propia, así que
+              // quedan al final (mismo criterio de fallback "9999" que ya se
+              // usa para ordenar tareas en otros lados de este archivo).
+              allItems.sort((a, b) => {
+                const fa = (a.type === 'tarea' && a.tarea.vencimiento) || '9999';
+                const fb = (b.type === 'tarea' && b.tarea.vencimiento) || '9999';
+                return fa > fb ? 1 : (fa < fb ? -1 : 0);
+              });
+              if (!allItems.length) return `<p class="text-muted text-sm">Sin tareas pendientes.</p>`;
+              return allItems.map(item => {
+                if (item.type === 'tarea') return `
+                  <div class="todo-item" style="border-left:3px solid #3b82f6;padding-left:8px;">
+                    <button onclick="event.stopPropagation();toggleTareaListo('${item.id}')" title="Marcar como hecha" style="flex-shrink:0;width:16px;height:16px;border-radius:50%;border:2px solid #cbd5e1;background:transparent;cursor:pointer;padding:0;margin-right:2px;"></button>
+                    <span style="font-size:10px;color:#3b82f6;font-weight:700;margin-right:4px;">TAREA</span>
+                    <label style="flex:1;cursor:pointer;" onclick="openTareaModal('${item.id}')">${item.text}</label>
+                    ${item.tarea.vencimiento ? `<span style="font-size:10px;color:${new Date(item.tarea.vencimiento+'T00:00:00')<new Date()?'#dc2626':'var(--text-muted)'};">📅${item.tarea.vencimiento}</span>` : ''}
+                  </div>`;
+                return `
+                  <div class="todo-item ${item.done ? 'done' : ''}" data-id="${item.id}">
+                    <input type="checkbox" ${item.done ? 'checked' : ''} onchange="toggleTodo(${item.id})">
+                    <label onclick="toggleTodo(${item.id})">${item.text}</label>
+                    <button onclick="removeTodo(${item.id})" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:16px;padding:0 4px;" title="Eliminar">×</button>
+                  </div>`;
+              }).join('');
+            })()}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Contenidos próximos -->
+    <div class="card">
+      <div class="card-header">
+        <i data-lucide="calendar" style="width:15px;height:15px;color:var(--accent);stroke-width:1.75;"></i>
+        <h2>Próximas publicaciones</h2>
+      </div>
+      <div class="card-body" style="padding:0;">
+        ${(() => {
+          const hoyStr = hoy.toISOString().split('T')[0];
+          const proximos = STATE.contenidos
+            .filter(c => c.fechaPub >= hoyStr && c.estado !== 'Publicado')
+            .sort((a,b) => a.fechaPub > b.fechaPub ? 1 : -1)
+            .slice(0, 5);
+          if (!proximos.length) return `<div class="empty-state" style="padding:24px;"><p>No hay contenidos programados próximamente.</p></div>`;
+          return `<div style="overflow-x:auto;"><table class="data-table data-table-cards">
+            <thead><tr><th>Fecha</th><th>Título</th><th>Plataforma</th><th>Estado</th><th></th></tr></thead>
+            <tbody>${proximos.map(c => `
+              <tr>
+                <td data-label="Fecha">${fmtDate(c.fechaPub)}</td>
+                <td data-label="Título" style="font-weight:500;">${c.titulo}</td>
+                <td data-label="Plataforma">${(c.plataformas||[]).map(p => platBadge(p)).join(' ')}</td>
+                <td data-label="Estado">${statusBadge(c.estado)}</td>
+                <td><button class="btn btn-secondary btn-sm" onclick="openContenidoModalById('${c.id}')">Editar</button></td>
+              </tr>
+            `).join('')}</tbody>
+          </table></div>`;
+        })()}
+      </div>
+    </div>
+    ${(() => {
+      const archivadas = STATE.tareas.filter(t => t.archivado);
+      return archivadas.length ? `
+        <div style="text-align:right;margin-top:12px;">
+          <button class="btn btn-secondary btn-sm" onclick="renderSection('tareas');document.querySelector('[data-section=tareas]').click();" style="font-size:11px;color:var(--text-muted);">
+            📦 Ver tareas archivadas (${archivadas.length})
+          </button>
+        </div>
+      ` : '';
+    })()}
+
+    <!-- Sitio Web widget -->
+    ${(() => {
+      const wt = STATE.home.webTareas || [];
+      const pend = wt.filter(t => t.estado !== 'Listo');
+      if (!wt.length) return `
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header">
+            <i data-lucide="globe" style="width:15px;height:15px;color:#64748b;stroke-width:1.75;"></i>
+            <h2>Sitio Web</h2>
+            <button class="btn btn-secondary btn-sm" onclick="renderSection('web');document.querySelector('[data-section=web]').click();" style="margin-left:auto;">Ver todo</button>
+          </div>
+          <div class="card-body" style="padding:12px 20px;">
+            <button class="btn btn-primary btn-sm" onclick="openWebTaskModal(null)">+ Cargar primera tarea web</button>
+          </div>
+        </div>`;
+      return `
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header">
+            <i data-lucide="globe" style="width:15px;height:15px;color:#64748b;stroke-width:1.75;"></i>
+            <h2>Sitio Web <span style="font-size:12px;font-weight:400;color:var(--text-muted);">${pend.length} pendiente${pend.length!==1?'s':''}</span></h2>
+            <button class="btn btn-secondary btn-sm" onclick="document.querySelector('[data-section=web]').click();" style="margin-left:auto;">Ver todo</button>
+            <button class="btn btn-primary btn-sm" onclick="openWebTaskModal(null)">+</button>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="data-table data-table-cards">
+              <thead><tr><th>Tarea</th><th>Categoría</th><th>Estado</th><th>Vence</th><th></th></tr></thead>
+              <tbody>${pend.slice(0,5).map(t => `
+                <tr>
+                  <td data-label="Tarea" style="font-weight:500;">${t.titulo}</td>
+                  <td data-label="Categoría"><span style="font-size:11px;padding:2px 7px;border-radius:10px;background:#f1f5f9;color:var(--text-muted);">${t.categoria||'Otro'}</span></td>
+                  <td data-label="Estado">${t.estado}</td>
+                  <td data-label="Vence" style="font-size:12px;color:var(--text-muted);">${t.vencimiento ? fmtDate(t.vencimiento) : '—'}</td>
+                  <td><button class="btn btn-secondary btn-sm" onclick="openWebTaskModal('${t.id}')">✏️</button></td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    })()}
+  `;
+}
+
+window.editPrioridades = function() {
+  const { prioridades = [] } = STATE.home || {};
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:480px;">
+      <div class="modal-header">
+        <h3>⭐ Editar prioridades</h3>
+        <button class="modal-close" id="_closePrioModal">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">Una prioridad por línea. Enter agrega una nueva línea.</p>
+        <textarea id="_prioTextarea" class="form-control" rows="6" style="resize:vertical;">${prioridades.join('\n')}</textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="_cancelPrioBtn">Cancelar</button>
+        <button class="btn btn-primary" id="_savePrioBtn">Guardar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const ta = document.getElementById('_prioTextarea');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  const close = () => overlay.remove();
+  document.getElementById('_closePrioModal').addEventListener('click', close);
+  document.getElementById('_cancelPrioBtn').addEventListener('click', close);
+  document.getElementById('_savePrioBtn').addEventListener('click', () => {
+    STATE.home.prioridades = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+    saveHomeData(clientId, STATE.home);
+    close();
+    renderSection('home');
+  });
+};
+
+window.toggleTodo = async function(id) {
+  const t = STATE.home.todos.find(x => x.id === id);
+  if (!t) return;
+  t.done = !t.done;
+  await saveHomeData(clientId, STATE.home);
+  renderSection('home');
+};
+
+window.removeTodo = async function(id) {
+  STATE.home.todos = STATE.home.todos.filter(x => x.id !== id);
+  await saveHomeData(clientId, STATE.home);
+  renderSection('home');
+};
+
+window.addTodoItem = function() {
+  openTareaModal(null);
+};
+
+// ──────────────────────────────────────────────────────
+// CONTENIDOS
+// ──────────────────────────────────────────────────────
+let activeContTab = 'banco';
+// Filtro orgánico/pauta/ambas del Banco de contenidos -- pedido de Vaneh
+// (07/09): "necesito poder filtrar sino me hago mucho lío". 07/09 (segunda
+// vuelta): los dos toggles independientes confundían -- Vaneh pidió algo
+// más simple, "aprieto uno y aparece solo eso, punto". Ahora es selección
+// única (como un tab): un solo botón activo a la vez, nunca los dos
+// prendidos ni los dos apagados. Un contenido "ambas" (c.pauta ===
+// 'dark-organico') aparece en los dos filtros porque tiene componente de
+// los dos, no porque estén ambos botones prendidos.
+let pautaFiltroSel = 'organico';
+
+// Filtros de plataforma y fecha del Banco de contenidos -- pedido de
+// Vaneh (21/09): "necesito poder filtrar por plataforma... y también por
+// fecha".
+let _bancoFiltroPlataforma = 'todas';
+let _bancoFiltroFechaDesde = '';
+let _bancoFiltroFechaHasta = '';
+const BANCO_PLATAFORMAS = ['Instagram', 'Facebook', 'LinkedIn', 'Twitter / X', 'TikTok', 'YouTube', 'Sitio Web', 'Blog'];
+
+function renderContenidos(container) {
+  container.innerHTML = `
+    <div class="mb-16" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <div class="tabs" id="cont-tabs">
+        <button class="tab-btn ${activeContTab==='banco'?'active':''}" data-tab="banco">Banco de contenidos</button>
+        <button class="tab-btn ${activeContTab==='calendario'?'active':''}" data-tab="calendario">Calendario de contenidos</button>
+        <button class="tab-btn ${activeContTab==='ideas'?'active':''}" data-tab="ideas">Banco de ideas</button>
+        <button class="tab-btn ${activeContTab==='metricas'?'active':''}" data-tab="metricas">Métricas</button>
+        <button class="tab-btn ${activeContTab==='archivados'?'active':''}" data-tab="archivados">Archivados</button>
+      </div>
+    </div>
+    <div id="cont-tab-body"></div>
+  `;
+
+  document.querySelectorAll('#cont-tabs .tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#cont-tabs .tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeContTab = btn.dataset.tab;
+      renderContTab(activeContTab);
+    });
+  });
+
+  document.querySelectorAll('#cont-pauta-filtros .tab-btn').forEach(btn => { /* sin pauta */
+    btn.addEventListener('click', () => {
+      pautaFiltroSel = btn.dataset.pautaFiltro;
+      document.querySelectorAll('#cont-pauta-filtros .tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderContTab(activeContTab);
+    });
+  });
+
+  renderContTab(activeContTab);
+}
+
+function renderContTab(tab) {
+  const body = document.getElementById('cont-tab-body');
+  if (!body) return;
+
+  if (tab === 'banco') renderBancoContenidos(body);
+  else if (tab === 'calendario') renderCalendario(body);
+  else if (tab === 'estados') renderKanbanContenidos(body);
+  else if (tab === 'feed-ig') renderFeedIG(body);
+  else if (tab === 'muro-fb') renderMuroFB(body);
+  else if (tab === 'stories') renderStories(body);
+  else if (tab === 'ideas') renderIdeas(body);
+  else if (tab === 'proceso') renderEnProceso(body);
+  else if (tab === 'metricas') renderMetricasContenidos(body);
+  else if (tab === 'archivados') renderArchivados(body);
+}
+
+// ─ Banco de contenidos (tabla desktop + cards mobile) ─
+function mesAnioLabel(fechaYYYYMM) {
+  const label = new Date(fechaYYYYMM + '-01T00:00:00').toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+// Pedido de Vaneh (07/09): ver de un vistazo si un contenido es orgánico
+// o de pauta, sin tener que abrirlo. Mapea c.pauta igual que matchPautaFilter.
+function pautaBadge(c) {
+  const p = c.pauta || 'organico';
+  if (p === 'dark-organico') return `<span style="font-size:10px;font-weight:700;background:#ede9fe;color:#6d28d9;border-radius:4px;padding:2px 7px;">Ambas</span>`;
+  if (p === 'dark') return `<span style="font-size:10px;font-weight:700;background:#fef3c7;color:#b45309;border-radius:4px;padding:2px 7px;">Pauta</span>`;
+  return `<span style="font-size:10px;font-weight:700;background:#dcfce7;color:#166534;border-radius:4px;padding:2px 7px;">Orgánico</span>`;
+}
+
+function bancoCardHtml(c) {
+  return `
+    <div class="content-card" onclick="openContenidoModalById('${c.id}')">
+      <div class="content-card-top">
+        <span class="content-card-fecha">${c.fechaPub ? fmtDate(c.fechaPub) : 'Sin fecha'}</span>
+        ${statusBadge(c.estado)}
+      </div>
+      <div class="content-card-titulo">${c.titulo}</div>
+      <div class="content-card-meta">
+        ${pautaBadge(c)}
+        ${(c.plataformas || []).map(p => platBadge(p)).join('')}
+        ${c.formato ? `<span style="font-size:10px;background:#f1f5f9;border-radius:4px;padding:2px 7px;color:var(--text-muted);">${Array.isArray(c.formato)?c.formato[0]:c.formato}</span>` : ''}
+        ${c.eje ? `<span style="font-size:10px;background:#f1f5f9;border-radius:4px;padding:2px 7px;color:var(--text-muted);">${c.eje}</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function bancoRowHtml(c) {
+  return `
+    <tr data-id="${c.id}" onclick="openContenidoModalById('${c.id}')" style="cursor:pointer;" class="banco-row">
+      <td><input type="date" value="${c.fechaPub||''}" class="banco-date-input" onclick="event.stopPropagation()" onchange="bancoUpdateFecha('${c.id}', this.value)" style="border:none;background:transparent;font-size:12px;color:var(--text);cursor:pointer;width:120px;"></td>
+      <td style="font-weight:500;min-width:160px;">${c.titulo}</td>
+      <td>${pautaBadge(c)}</td>
+      <td>${(c.plataformas||[]).map(p => platBadge(p)).join(' ')}</td>
+      <td onclick="event.stopPropagation()">
+        <select class="banco-estado-select" onchange="bancoUpdateEstado('${c.id}', this.value)" style="border:none;background:transparent;font-size:12px;color:var(--text);cursor:pointer;font-weight:600;">
+          ${['Idea','En proceso','En revisión','Aprobado','Programado','Publicado'].map(op => `<option value="${op}" ${c.estado===op?'selected':''}>${op}</option>`).join('')}
+        </select>
+      </td>
+      <td style="font-size:12px;">${Array.isArray(c.formato)?c.formato.join(', '):(c.formato||'')}</td>
+      <td style="font-size:12px;">${c.eje||''}</td>
+      <td>${firstLink(c.linkDrive) ? `<a class="drive-link" href="${firstLink(c.linkDrive)}" target="_blank" onclick="event.stopPropagation()" title="${firstLink(c.linkDrive)}">↗</a>` : ''}</td>
+      <td class="text-sm text-muted" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.notas||''}</td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap;">
+        ${c.estado === 'En revisión' ? `
+          <button class="btn btn-sm" style="background:#10b981;color:#fff;border:none;padding:3px 8px;" onclick="aprobarContenido('${c.id}')">✓</button>
+          <button class="btn btn-sm" style="background:#ef4444;color:#fff;border:none;padding:3px 8px;" onclick="rechazarContenido('${c.id}')">✗</button>
+        ` : ''}
+      </td>
+    </tr>
+  `;
+}
+
+function bancoMesGroupHtml(label, items, abierto, clave, labelPlano) {
+  const btnArch = clave ? `<button type="button" class="btn btn-secondary btn-sm mes-arch-btn" onclick="event.preventDefault();event.stopPropagation();pedirArchivarMes('${clave}','${(labelPlano || '').replace(/'/g, '')}')">${ico('archive', 'azul', 14)} Archivar mes</button>` : '';
+  return `
+    <details class="banco-mes-group" ${abierto ? 'open' : ''}>
+      <summary class="banco-mes-header">${label} <span class="banco-mes-count">${items.length}</span>${btnArch}</summary>
+      <div class="banco-cards-mobile">${items.map(bancoCardHtml).join('')}</div>
+      <div class="banco-table-desktop">
+        <p class="table-scroll-hint">← deslizá para ver más →</p>
+        <div class="table-wrapper table-scroll-wrap">
+          <table class="data-table">
+            <thead>
+              <tr><th>Fecha pub.</th><th>Título</th><th>Pauta</th><th>Plataforma</th><th>Estado</th><th>Formato</th><th>Eje</th><th>Drive</th><th>Notas</th><th></th></tr>
+            </thead>
+            <tbody>${items.map(bancoRowHtml).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+  `;
+}
+
+function matchPautaFilter(c) {
+  return true; // esta app no distingue orgánico/pauta
+  // eslint-disable-next-line no-unreachable
+  const p = c.pauta || 'organico';
+  if (pautaFiltroSel === 'organico') return p === 'organico' || p === 'dark-organico';
+  return p === 'dark' || p === 'dark-organico';
+}
+
+function renderBancoContenidos(container) {
+  const activos = STATE.contenidos.filter(c => !c.archivado).filter(matchPautaFilter)
+    .filter(c => _bancoFiltroPlataforma === 'todas' || (c.plataformas || []).includes(_bancoFiltroPlataforma))
+    .filter(c => !_bancoFiltroFechaDesde || (c.fechaPub && c.fechaPub >= _bancoFiltroFechaDesde))
+    .filter(c => !_bancoFiltroFechaHasta || (c.fechaPub && c.fechaPub <= _bancoFiltroFechaHasta));
+  const archivados = STATE.contenidos.filter(c => c.archivado);
+  const all = [...activos].sort((a, b) => (a.fechaPub || 'zzz') > (b.fechaPub || 'zzz') ? 1 : -1);
+
+  const hoy = new Date();
+  const anioActual = String(hoy.getFullYear());
+  const claveActual = `${anioActual}-${String(hoy.getMonth()+1).padStart(2,'0')}`;
+
+  const grupos = new Map();
+  all.forEach(c => {
+    const clave = c.fechaPub ? c.fechaPub.slice(0, 7) : 'sin-fecha';
+    if (!grupos.has(clave)) grupos.set(clave, []);
+    grupos.get(clave).push(c);
+  });
+  const clavesConFecha = [...grupos.keys()].filter(c => c !== 'sin-fecha').sort((a, b) => a.localeCompare(b));
+  const anios = [...new Set(clavesConFecha.map(c => c.slice(0, 4)))];
+
+  const sinFechaHtml = grupos.has('sin-fecha')
+    ? bancoMesGroupHtml(ico('pin', 'azul', 14) + ' Sin fecha', grupos.get('sin-fecha'), true, 'sin-fecha', 'Sin fecha')
+    : '';
+
+  const aniosHtml = anios.map(anio => {
+    const clavesDelAnio = clavesConFecha.filter(c => c.slice(0, 4) === anio);
+    const totalAnio = clavesDelAnio.reduce((n, c) => n + grupos.get(c).length, 0);
+    const abiertoAnio = anio === anioActual;
+    return `
+      <details class="banco-anio-group" ${abiertoAnio ? 'open' : ''}>
+        <summary class="banco-anio-header">${anio} <span class="banco-mes-count">${totalAnio}</span></summary>
+        <div class="banco-anio-body">
+          ${clavesDelAnio.map(clave => bancoMesGroupHtml(mesAnioLabel(clave), grupos.get(clave), clave === claveActual, clave, mesAnioLabel(clave))).join('')}
+        </div>
+      </details>
+    `;
+  }).join('');
+
+  const hayAlgunContenido = STATE.contenidos.some(c => !c.archivado);
+  const hayFiltroActivo = _bancoFiltroPlataforma !== 'todas' || _bancoFiltroFechaDesde || _bancoFiltroFechaHasta;
+
+  const filtrosHtml = `
+    <div class="banco-filtros" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;">
+      <select id="banco-filtro-plataforma" class="form-control" style="width:auto;font-size:12px;padding:5px 8px;" onchange="cambiarBancoFiltroPlataforma(this.value)">
+        <option value="todas">Todas las plataformas</option>
+        ${BANCO_PLATAFORMAS.map(p => `<option value="${p}" ${_bancoFiltroPlataforma === p ? 'selected' : ''}>${p}</option>`).join('')}
+      </select>
+      <div class="banco-fechas">
+      <label style="font-size:12px;color:var(--text-muted);">Desde</label>
+      <input type="date" id="banco-filtro-desde" class="form-control" style="width:auto;font-size:12px;padding:5px 8px;" value="${_bancoFiltroFechaDesde}" onchange="cambiarBancoFiltroFecha('desde', this.value)">
+      <label style="font-size:12px;color:var(--text-muted);">Hasta</label>
+      <input type="date" id="banco-filtro-hasta" class="form-control" style="width:auto;font-size:12px;padding:5px 8px;" value="${_bancoFiltroFechaHasta}" onchange="cambiarBancoFiltroFecha('hasta', this.value)">
+      </div>
+      ${hayFiltroActivo ? `<button class="btn btn-secondary btn-sm" onclick="limpiarBancoFiltros()">✕ Limpiar filtros</button>` : ''}
+      <span style="font-size:12px;color:var(--text-muted);${hayFiltroActivo ? '' : 'margin-left:auto;'}">${all.length} contenido${all.length !== 1 ? 's' : ''}</span>
+    </div>`;
+
+  container.innerHTML = `
+    ${filtrosHtml}
+    ${all.length ? sinFechaHtml + aniosHtml : `<div class="empty-state"><p>${hayAlgunContenido?'Sin contenidos con este filtro.':'Sin contenidos aún.'}</p></div>`}
+  `;
+}
+
+window.cambiarBancoFiltroPlataforma = function(val) {
+  _bancoFiltroPlataforma = val;
+  renderContTab('banco');
+};
+
+window.cambiarBancoFiltroFecha = function(cual, val) {
+  if (cual === 'desde') _bancoFiltroFechaDesde = val;
+  else _bancoFiltroFechaHasta = val;
+  renderContTab('banco');
+};
+
+window.limpiarBancoFiltros = function() {
+  _bancoFiltroPlataforma = 'todas';
+  _bancoFiltroFechaDesde = '';
+  _bancoFiltroFechaHasta = '';
+  renderContTab('banco');
+};
+
+window.bancoUpdateFecha = async function(id, fecha) {
+  const c = STATE.contenidos.find(x => x.id === id);
+  if (!c) return;
+  c.fechaPub = fecha || null;
+  await saveContenido(clientId, c);
+  const i = STATE.contenidos.findIndex(x => x.id === id);
+  STATE.contenidos[i] = c;
+};
+
+window.bancoUpdateEstado = async function(id, estado) {
+  const c = STATE.contenidos.find(x => x.id === id);
+  if (!c) return;
+  c.estado = estado;
+  const saved = await saveContenido(clientId, c);
+  const i = STATE.contenidos.findIndex(x => x.id === id);
+  STATE.contenidos[i] = saved;
+  renderContTab(activeContTab);
+  if (currentSection === 'home') renderSection('home');
+};
+
+// ─ Calendario ─
+function renderCalendario(container) {
+  const hoy = new Date();
+  let viewYear = hoy.getFullYear(), viewMonth = hoy.getMonth();
+
+  function drawCal() {
+    const monthName = new Date(viewYear, viewMonth, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+    const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const daysInPrev = new Date(viewYear, viewMonth, 0).getDate();
+
+    let cells = '';
+    let day = 1;
+    let nextDay = 1;
+    const totalCells = Math.ceil((firstDay + daysInMonth) / 7) * 7;
+
+    for (let i = 0; i < totalCells; i++) {
+      let cellDate, isOther = false;
+      if (i < firstDay) { cellDate = new Date(viewYear, viewMonth - 1, daysInPrev - firstDay + i + 1); isOther = true; }
+      else if (day > daysInMonth) { cellDate = new Date(viewYear, viewMonth + 1, nextDay++); isOther = true; }
+      else { cellDate = new Date(viewYear, viewMonth, day++); }
+
+      const dateStr = cellDate.toISOString().split('T')[0];
+      const isToday = dateStr === hoy.toISOString().split('T')[0];
+      const dayConts = STATE.contenidos.filter(c => c.fechaPub === dateStr && !c.archivado);
+
+      cells += `<div class="cal-day${isOther ? ' other-month' : ''}${isToday ? ' today' : ''}">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div class="cal-day-num" ${!isOther ? `onclick="openContenidoModal({fechaPub:'${dateStr}'})" style="cursor:pointer;" title="Agregar contenido"` : ''}>${cellDate.getDate()}</div>
+          ${!isOther ? `<button onclick="openContenidoModal({fechaPub:'${dateStr}'})" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:16px;line-height:1;padding:0 4px;border-radius:3px;" title="Agregar contenido" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='#cbd5e1'">+</button>` : ''}
+        </div>
+        ${dayConts.map(c => `
+          <div class="cal-event" style="background:${statusColor(c.estado)}22;color:${statusColor(c.estado)};"
+               onclick="openContenidoModalById('${c.id}')" title="${c.titulo}">
+            ${(c.plataformas||[]).map(p=>platIcon(p)).join('')} ${c.titulo}
+          </div>
+        `).join('')}
+      </div>`;
+    }
+
+    container.innerHTML = `
+      <div class="card">
+        <div class="card-body">
+          <div class="cal-nav">
+            <button class="cal-btn" id="cal-prev">‹</button>
+            <div class="cal-month">${monthName.charAt(0).toUpperCase()+monthName.slice(1)}</div>
+            <button class="cal-btn" id="cal-next">›</button>
+          </div>
+          <div class="cal-grid">
+            ${['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'].map(d => `<div class="cal-day-header">${d}</div>`).join('')}
+            ${cells}
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('cal-prev').onclick = () => { if (--viewMonth < 0) { viewMonth=11; viewYear--; } drawCal(); };
+    document.getElementById('cal-next').onclick = () => { if (++viewMonth > 11) { viewMonth=0; viewYear++; } drawCal(); };
+  }
+  drawCal();
+}
+
+// ─ Kanban Estados ─
+function renderKanbanContenidos(container) {
+  const cols = [
+    { key: 'Idea', label: 'Idea', cls: 's-idea' },
+    { key: 'En proceso', label: 'En proceso', cls: 's-proceso' },
+    { key: 'En revisión', label: 'En revisión', cls: 's-revision' },
+    { key: 'Aprobado', label: 'Aprobado', cls: 's-aprobado' },
+    { key: 'Programado', label: 'Programado', cls: 's-programado' },
+    { key: 'Publicado', label: 'Publicado', cls: 's-publicado' },
+  ];
+
+  container.innerHTML = `<div class="kanban-board" id="kanban-cont">${cols.map(col => {
+    const items = STATE.contenidos.filter(c => c.estado === col.key && !c.archivado);
+    return `
+      <div class="kanban-col" data-col="${col.key}">
+        <div class="kanban-col-header">
+          <span class="kanban-col-dot" style="background:${statusColor(col.key)};"></span>
+          <span class="col-title">${col.label}</span>
+          <span class="col-count">${items.length}</span>
+        </div>
+        <div class="kanban-cards" data-col="${col.key}">
+          ${items.map(c => `
+            <div class="kanban-card" draggable="true" data-id="${c.id}">
+              <div class="kanban-card-title">${c.titulo}</div>
+              <div class="kanban-card-meta">${(c.plataformas||[]).map(p=>platBadge(p)).join(' ')}</div>
+              ${c.fechaPub ? `<div class="kanban-card-date">${fmtDate(c.fechaPub)}</div>` : ''}
+              <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
+                <button class="btn btn-secondary btn-sm" onclick="openContenidoModalById('${c.id}')">Editar</button>
+                <button class="btn btn-secondary btn-sm" onclick="openPreview('${c.id}')">Preview</button>
+                ${col.key === 'En revisión' ? `
+                  <button class="btn btn-sm" style="background:#10b981;color:#fff;border:none;" onclick="aprobarContenido('${c.id}')">✓ Aprobar</button>
+                  <button class="btn btn-sm" style="background:#ef4444;color:#fff;border:none;" onclick="rechazarContenido('${c.id}')">✗ Rechazar</button>
+                ` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <button class="kanban-add-btn" onclick="openContenidoModal({estado:'${col.key}'})">+ Agregar</button>
+      </div>
+    `;
+  }).join('')}</div>`;
+
+  initKanbanDrag('#kanban-cont', STATE.contenidos.filter(c => !c.archivado), async (id, newCol) => {
+    const c = STATE.contenidos.find(x => x.id === id);
+    if (!c) return;
+    c.estado = newCol;
+    await saveContenido(clientId, c);
+    renderContTab('estados');
+  });
+}
+
+// ─ Feed IG ─
+let _igFilter = 'Aprobado';
+const FEED_FILTERS = [
+  { val: 'todas', label: 'Todas' },
+  { val: 'Sin empezar', label: 'Sin empezar' },
+  { val: 'En proceso', label: 'En proceso' },
+  { val: 'En revisión', label: 'En revisión' },
+  { val: 'Aprobado', label: 'Aprobadas' },
+  { val: 'Publicado', label: 'Publicadas' },
+];
+
+window.setIgFilter = function(val) { _igFilter = val; renderContTab('feed-ig'); };
+
+let _igSubTab = 'real';
+window.setIgSubTab = function(v) { _igSubTab = v; renderFeedIG(document.getElementById('cont-tab-body')); };
+
+function renderFeedIG(container) {
+  const subTabBtns = `
+    <div style="display:flex;gap:6px;margin-bottom:16px;">
+      <button onclick="setIgSubTab('real')" class="btn btn-sm ${_igSubTab==='real'?'btn-primary':'btn-secondary'}">📤 Publicado</button>
+      <button onclick="setIgSubTab('borrador')" class="btn btn-sm ${_igSubTab==='borrador'?'btn-primary':'btn-secondary'}">📋 Borrador (pendiente de aprobación)</button>
+    </div>`;
+  container.innerHTML = subTabBtns + '<div id="ig-subtab-body"></div>';
+  const body = document.getElementById('ig-subtab-body');
+  if (_igSubTab === 'borrador') renderFeedBorrador(body);
+  else renderFeedIGReal(body);
+}
+
+function renderFeedIGReal(container) {
+  const all = STATE.contenidos
+    .filter(c => (c.plataformas||[]).includes('Instagram') && !normUbicacion(c.ubicacion||[]).includes('Story'))
+    .sort((a,b) => (a.fechaPub||'') < (b.fechaPub||'') ? -1 : 1); // ASC: próximos primero
+
+  const filtered = _igFilter === 'todas' ? all : all.filter(c => c.estado === _igFilter);
+  const feedItems = filtered.slice(0, 9);
+
+  const client = STATE.client;
+  const filterBtns = FEED_FILTERS.map(f =>
+    `<button onclick="setIgFilter('${f.val}')" style="padding:4px 10px;border-radius:20px;border:1px solid ${_igFilter===f.val?'var(--primary)':'var(--border)'};background:${_igFilter===f.val?'var(--primary)':'transparent'};color:${_igFilter===f.val?'#fff':'var(--text-muted)'};font-size:11px;cursor:pointer;font-weight:${_igFilter===f.val?'600':'400'}">${f.label}</button>`
+  ).join('');
+
+  const screenHtml = `
+    <div style="padding:10px 12px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:10px;">
+      <div class="ig-avatar"></div>
+      <div>
+        <div style="font-weight:700;font-size:13px;">${client.instagram||'@cuenta'}</div>
+        <div style="font-size:10px;color:#666;">${all.filter(c=>c.estado==='Publicado').length} publicaciones</div>
+      </div>
+    </div>
+    <div class="feed-grid">
+      ${feedItems.map(c => {
+        const thumb = firstLink(c.linkDrive) ? driveThumb(firstLink(c.linkDrive)) : '';
+        const imgTag = thumb ? `<img src="${thumb}" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">` : '';
+        return `
+        <div class="feed-cell" onclick="openContenidoModalById('${c.id}')" title="${c.titulo}">
+          ${imgTag}
+          <div class="feed-cell-empty" style="${thumb?'display:none':''};">${platIcon('Instagram')}</div>
+          <div class="feed-cell-overlay">
+            <div style="font-size:9px;font-weight:600;line-height:1.2;">${c.titulo}</div>
+            <div style="margin-top:3px;">${statusDot(c.estado)}</div>
+          </div>
+        </div>`;
+      }).join('')}
+      ${Array(Math.max(0, 9 - feedItems.length)).fill(0).map(() =>
+        `<div class="feed-cell"><div class="feed-cell-empty" style="color:#e2e8f0;font-size:20px;">+</div></div>`
+      ).join('')}
+    </div>`;
+
+  container.innerHTML = `
+    <div style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+      <span style="font-size:12px;color:var(--text-muted);margin-right:4px;">Filtrar:</span>
+      ${filterBtns}
+      <span style="margin-left:auto;font-size:12px;color:var(--text-muted);">${filtered.length} contenido${filtered.length!==1?'s':''}</span>
+    </div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+      ${phoneFrame(screenHtml, { label: 'Feed Instagram' })}
+
+      <div style="flex:1;min-width:280px;">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;">Posts de Instagram (Feed)</h3>
+        ${filtered.length ? filtered.map(c => {
+          const thumb = firstLink(c.linkDrive) ? driveThumb(firstLink(c.linkDrive)) : '';
+          return `
+          <div class="card" style="padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:10px;">
+            ${thumb ? `<img src="${thumb}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'">` : `<div style="width:44px;height:44px;border-radius:6px;background:var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;">${platIcon('Instagram')}</div>`}
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.titulo}</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${fmtDate(c.fechaPub)||'Sin fecha'} · ${Array.isArray(c.formato)?c.formato.join(', '):(c.formato||'—')}</div>
+            </div>
+            ${statusBadge(c.estado)}
+            <button class="btn btn-secondary btn-sm" onclick="openContenidoModalById('${c.id}')">✏️</button>
+          </div>`;
+        }).join('') : `<div class="empty-state"><p>No hay contenidos con ese filtro.</p></div>`}
+      </div>
+    </div>
+  `;
+}
+
+// ── Borrador de grilla de Instagram (pendiente de aprobación) ──────
+// Pedido de Vaneh (13/09): grilla grande arrastrable en formato 4:5,
+// con una pestaña aparte para ver como Reel lo que se marque como tal,
+// y portadas de texto con color propio por cliente cuando todavía no
+// hay material. Se carga aparte (lazy) de loadAllData(), recién al
+// entrar a esta pestaña -- "no puede tardar más de 1 segundo" el resto
+// del Hub por esto.
+const BORRADOR_CELDAS = 12;
+let _borradorCache = null; // { celdas: [...], colorMarca }
+let _borradorView = 'grilla'; // 'grilla' | 'reel'
+let _borradorEditingIdx = null;
+let _borradorImgPendiente = null; // data URL del archivo recién elegido, todavía sin guardar
+
+function celdaVacia() {
+  return { contenidoId: null, imagen: null, texto: '', color: null, esReel: false };
+}
+
+async function renderFeedBorrador(container) {
+  container.innerHTML = `<div class="empty-state"><p>Cargando borrador...</p></div>`;
+  if (!_borradorCache) {
+    try {
+      _borradorCache = await getFeedBorrador(clientId);
+    } catch (e) {
+      container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>No se pudo cargar</h3><p>${e.message || ''}</p></div>`;
+      return;
+    }
+  }
+  if (!_borradorCache.celdas || !_borradorCache.celdas.length) {
+    _borradorCache.celdas = Array.from({ length: BORRADOR_CELDAS }, celdaVacia);
+  }
+  if (!_borradorCache.colorMarca) _borradorCache.colorMarca = '#111111';
+  pintarFeedBorrador(container);
+}
+
+function celdaImagenSrc(celda) {
+  if (celda.imagen) return celda.imagen;
+  if (celda.contenidoId) {
+    const c = STATE.contenidos.find(x => x.id === celda.contenidoId);
+    if (c) {
+      if (c.imagenes && c.imagenes[0]) return c.imagenes[0].src;
+      const thumb = firstLink(c.linkDrive) ? driveThumb(firstLink(c.linkDrive)) : '';
+      if (thumb) return thumb;
+    }
+  }
+  return null;
+}
+
+function renderCeldaBorrador(celda, idx) {
+  const img = celdaImagenSrc(celda);
+  const color = celda.color || _borradorCache.colorMarca;
+  let inner;
+  if (img) {
+    inner = `<img src="${img}" alt="">`;
+  } else if (celda.texto) {
+    inner = `<div class="ig-draft-cover-text" style="background:${color};color:#fff;">${escapeHtml(celda.texto)}</div>`;
+  } else {
+    inner = `<div class="ig-draft-empty">📷<span>Arrastrá una imagen<br>o tocá para editar</span></div>`;
+  }
+  return `
+    <div class="ig-draft-cell" data-idx="${idx}" onclick="abrirCeldaBorrador(${idx})"
+      ondragover="event.preventDefault();this.classList.add('drag-over');"
+      ondragleave="this.classList.remove('drag-over');"
+      ondrop="soltarImagenEnCelda(event,${idx})">
+      ${inner}
+      ${celda.esReel ? `<div class="ig-draft-reel-badge">🎬 Reel</div>` : ''}
+      <div class="ig-draft-hover">✏️ Editar</div>
+    </div>`;
+}
+
+function pintarFeedBorrador(container) {
+  const { celdas, colorMarca } = _borradorCache;
+  const viewBtns = `
+    <button onclick="setBorradorView('grilla')" class="btn btn-sm ${_borradorView==='grilla'?'btn-primary':'btn-secondary'}">▦ Grilla</button>
+    <button onclick="setBorradorView('reel')" class="btn btn-sm ${_borradorView==='reel'?'btn-primary':'btn-secondary'}">🎬 Ver como Reel</button>
+  `;
+  const colorPicker = `
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);margin-left:auto;">
+      Color de marca
+      <input type="color" value="${colorMarca}" onchange="cambiarColorMarcaBorrador(this.value)" style="width:32px;height:28px;border:1px solid var(--border);border-radius:6px;padding:1px;cursor:pointer;">
+    </label>`;
+
+  let screenHtml;
+  if (_borradorView === 'reel') {
+    const reels = celdas.map((c, i) => ({ c, i })).filter(x => x.c.esReel);
+    screenHtml = reels.length
+      ? `<div style="display:flex;overflow-x:auto;height:100%;scroll-snap-type:x mandatory;">
+          ${reels.map(({ c, i }) => {
+            const img = celdaImagenSrc(c);
+            const color = c.color || colorMarca;
+            return `<div style="flex:0 0 100%;scroll-snap-align:start;position:relative;height:100%;cursor:pointer;" onclick="abrirCeldaBorrador(${i})">
+              ${img ? `<img src="${img}" style="width:100%;height:100%;object-fit:cover;">` : `<div style="width:100%;height:100%;background:${color};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;text-align:center;padding:14%;">${escapeHtml(c.texto||'')}</div>`}
+              <div style="position:absolute;bottom:14px;left:12px;right:12px;color:#fff;font-size:11px;font-weight:600;text-shadow:0 1px 4px rgba(0,0,0,.6);">🎬 Reel ${reels.length>1?`(${reels.findIndex(r=>r.i===i)+1}/${reels.length})`:''}</div>
+            </div>`;
+          }).join('')}
+        </div>`
+      : `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#94a3b8;font-size:12px;text-align:center;padding:20px;">Todavía no marcaste ninguna celda como Reel.<br>Editá una publicación y tildá "Es Reel".</div>`;
+  } else {
+    screenHtml = `<div class="ig-draft-grid">${celdas.map((c, i) => renderCeldaBorrador(c, i)).join('')}</div>`;
+  }
+
+  container.innerHTML = `
+    <div style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      ${viewBtns}
+      ${colorPicker}
+    </div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+      ${phoneFrame(screenHtml, { label: _borradorView === 'reel' ? 'Vista Reel' : 'Borrador -- pendiente de aprobación' })}
+      <div style="flex:1;min-width:240px;font-size:12.5px;color:var(--text-muted);line-height:1.7;">
+        <p style="margin-bottom:8px;"><strong style="color:var(--text);">Cómo se usa:</strong></p>
+        <p>• Arrastrá una imagen de tu compu directo sobre cualquier celda, o tocala para elegir un archivo, vincular un contenido ya cargado, o armarle una portada de texto.</p>
+        <p style="margin-top:8px;">• El color de marca se usa como fondo de las portadas de texto que no tengan su propio color elegido.</p>
+        <p style="margin-top:8px;">• Tildá "Es Reel" en cualquier celda para verla en la pestaña "Ver como Reel", en formato vertical.</p>
+      </div>
+    </div>
+  `;
+}
+
+window.setBorradorView = function(v) { _borradorView = v; pintarFeedBorrador(document.getElementById('ig-subtab-body')); };
+
+window.cambiarColorMarcaBorrador = async function(color) {
+  _borradorCache.colorMarca = color;
+  pintarFeedBorrador(document.getElementById('ig-subtab-body'));
+  await saveFeedBorrador(clientId, _borradorCache).catch(() => {});
+};
+
+window.soltarImagenEnCelda = function(event, idx) {
+  event.preventDefault();
+  event.currentTarget.classList.remove('drag-over');
+  const file = event.dataTransfer.files && event.dataTransfer.files[0];
+  if (!file || !file.type.startsWith('image/')) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    _borradorCache.celdas[idx] = { ...celdaVacia(), imagen: e.target.result };
+    pintarFeedBorrador(document.getElementById('ig-subtab-body'));
+    await saveFeedBorrador(clientId, _borradorCache).catch(() => {});
+  };
+  reader.readAsDataURL(file);
+};
+
+window.abrirCeldaBorrador = function(idx) {
+  _borradorEditingIdx = idx;
+  _borradorImgPendiente = null;
+  const c = _borradorCache.celdas[idx];
+  document.getElementById('bc-file-input').value = '';
+  document.getElementById('bc-texto').value = c.texto || '';
+  document.getElementById('bc-color').value = c.color || _borradorCache.colorMarca;
+  document.getElementById('bc-es-reel').checked = !!c.esReel;
+  const sel = document.getElementById('bc-contenido-select');
+  const conImagen = STATE.contenidos.filter(x => (x.imagenes && x.imagenes[0]) || firstLink(x.linkDrive));
+  sel.innerHTML = '<option value="">-- Ninguno --</option>' + conImagen.map(x => `<option value="${x.id}" ${c.contenidoId===x.id?'selected':''}>${escapeHtml(x.titulo)}</option>`).join('');
+  actualizarPreviewCelda();
+  sel.onchange = () => { _borradorImgPendiente = null; actualizarPreviewCelda(); };
+  document.getElementById('bc-texto').oninput = actualizarPreviewCelda;
+  document.getElementById('bc-color').oninput = actualizarPreviewCelda;
+  document.getElementById('bc-file-input').onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => { _borradorImgPendiente = ev.target.result; actualizarPreviewCelda(); };
+    reader.readAsDataURL(file);
+  };
+  document.getElementById('borradorCeldaModal').classList.remove('hidden');
+};
+
+function actualizarPreviewCelda() {
+  const preview = document.getElementById('bc-preview');
+  const contenidoId = document.getElementById('bc-contenido-select').value;
+  const texto = document.getElementById('bc-texto').value;
+  const color = document.getElementById('bc-color').value;
+  let img = _borradorImgPendiente;
+  if (!img && contenidoId) {
+    const c = STATE.contenidos.find(x => x.id === contenidoId);
+    img = c ? celdaImagenSrc({ contenidoId, imagen: null }) : null;
+  }
+  if (img) preview.innerHTML = `<img src="${img}" style="width:100%;height:100%;object-fit:cover;">`;
+  else if (texto) preview.innerHTML = `<div style="width:100%;height:100%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;padding:12%;font-weight:800;">${escapeHtml(texto)}</div>`;
+  else preview.innerHTML = `<div style="width:100%;height:100%;background:var(--surface-sunken);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:11px;">Sin contenido</div>`;
+}
+
+window.guardarCeldaBorrador = async function() {
+  const idx = _borradorEditingIdx;
+  if (idx === null) return;
+  const contenidoId = document.getElementById('bc-contenido-select').value || null;
+  const texto = document.getElementById('bc-texto').value.trim();
+  const color = document.getElementById('bc-color').value;
+  const esReel = document.getElementById('bc-es-reel').checked;
+  _borradorCache.celdas[idx] = {
+    contenidoId: _borradorImgPendiente ? null : contenidoId,
+    imagen: _borradorImgPendiente || (contenidoId ? null : (_borradorCache.celdas[idx].imagen || null)),
+    texto: texto || '',
+    color: texto && color !== _borradorCache.colorMarca ? color : null,
+    esReel,
+  };
+  document.getElementById('borradorCeldaModal').classList.add('hidden');
+  pintarFeedBorrador(document.getElementById('ig-subtab-body'));
+  await saveFeedBorrador(clientId, _borradorCache).catch(() => {});
+};
+
+window.quitarCeldaBorrador = async function() {
+  const idx = _borradorEditingIdx;
+  if (idx === null) return;
+  _borradorCache.celdas[idx] = celdaVacia();
+  document.getElementById('borradorCeldaModal').classList.add('hidden');
+  pintarFeedBorrador(document.getElementById('ig-subtab-body'));
+  await saveFeedBorrador(clientId, _borradorCache).catch(() => {});
+};
+
+// ─ Muro FB ─
+let _fbFilter = 'Aprobado';
+window.setFbFilter = function(val) { _fbFilter = val; renderContTab('muro-fb'); };
+
+function renderMuroFB(container) {
+  const all = STATE.contenidos
+    .filter(c => (c.plataformas||[]).includes('Facebook') && !normUbicacion(c.ubicacion||[]).includes('Story'))
+    .sort((a,b) => (a.fechaPub||'') < (b.fechaPub||'') ? -1 : 1);
+  const fbItems = _fbFilter === 'todas' ? all : all.filter(c => c.estado === _fbFilter);
+
+  const filterBtns = FEED_FILTERS.map(f =>
+    `<button onclick="setFbFilter('${f.val}')" style="padding:4px 10px;border-radius:20px;border:1px solid ${_fbFilter===f.val?'var(--primary)':'var(--border)'};background:${_fbFilter===f.val?'var(--primary)':'transparent'};color:${_fbFilter===f.val?'#fff':'var(--text-muted)'};font-size:11px;cursor:pointer;">${f.label}</button>`
+  ).join('');
+
+  container.innerHTML = `
+    <div style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+      <span style="font-size:12px;color:var(--text-muted);margin-right:4px;">Filtrar:</span>${filterBtns}
+    </div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+      ${phoneFrame(`
+          <div style="background:#f0f2f5;height:100%;overflow-y:auto;">
+          <div style="padding:8px;background:#1877f2;color:white;font-weight:700;font-size:14px;display:flex;align-items:center;gap:8px;">
+            📘 ${STATE.client.facebook || STATE.client.nombre || 'Página'}
+          </div>
+          ${fbItems.slice(0,3).map(c => `
+            <div class="fb-preview" style="margin-bottom:4px;">
+              <div class="fb-header">
+                <div class="fb-avatar">${(STATE.client.nombre||'C')[0]}</div>
+                <div>
+                  <div class="fb-name">${STATE.client.facebook || STATE.client.nombre || 'Página'}</div>
+                  <div class="fb-time">${fmtDate(c.fechaPub)} · 🌐</div>
+                </div>
+              </div>
+              <div class="fb-text">${(c.copy||c.titulo||'').slice(0,80)}${(c.copy||'').length>80?'...':''}</div>
+              <div class="fb-image">${firstLink(c.linkDrive)?`<img src="${driveThumb(firstLink(c.linkDrive))}" onerror="this.style.display='none'" style="width:100%;height:100%;object-fit:cover;">`:'📘'}</div>
+            </div>
+          `).join('')}
+          </div>
+        `, { width: 300, label: 'Muro Facebook' })}
+
+      <div style="flex:1;min-width:280px;">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;">Posts de Facebook</h3>
+        ${fbItems.length ? fbItems.map(c => {
+          const thumb = firstLink(c.linkDrive) ? driveThumb(firstLink(c.linkDrive)) : '';
+          return `
+          <div class="card" style="padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:10px;">
+            ${thumb ? `<img src="${thumb}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'">` : `<div style="width:44px;height:44px;border-radius:6px;background:var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;">📘</div>`}
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.titulo}</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${fmtDate(c.fechaPub)||'Sin fecha'} · ${Array.isArray(c.formato)?c.formato.join(', '):(c.formato||'—')}</div>
+            </div>
+            ${statusBadge(c.estado)}
+            <button class="btn btn-secondary btn-sm" onclick="openContenidoModalById('${c.id}')">✏️</button>
+          </div>`;
+        }).join('') : `<div class="empty-state"><p>No hay posts con ese filtro.</p></div>`}
+      </div>
+    </div>
+  `;
+}
+
+// ─ Stories ─
+let _storiesFilter = 'todas';
+window.setStoriesFilter = function(val) { _storiesFilter = val; renderContTab('stories-ig'); };
+
+function renderStories(container) {
+  const all = STATE.contenidos.filter(c =>
+    (c.plataformas||[]).includes('Instagram') && normUbicacion(c.ubicacion||[]).includes('Story')
+  ).sort((a,b) => (a.fechaPub||'') < (b.fechaPub||'') ? -1 : 1);
+
+  const stories = _storiesFilter === 'todas' ? all : all.filter(c => c.estado === _storiesFilter);
+
+  const filterBtns = FEED_FILTERS.map(f =>
+    `<button onclick="setStoriesFilter('${f.val}')" style="padding:4px 10px;border-radius:20px;border:1px solid ${_storiesFilter===f.val?'var(--primary)':'var(--border)'};background:${_storiesFilter===f.val?'var(--primary)':'transparent'};color:${_storiesFilter===f.val?'#fff':'var(--text-muted)'};font-size:11px;cursor:pointer;">${f.label}</button>`
+  ).join('');
+
+  container.innerHTML = `
+    <div style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+      <span style="font-size:12px;color:var(--text-muted);margin-right:4px;">Filtrar:</span>${filterBtns}
+      <span style="margin-left:auto;font-size:12px;color:var(--text-muted);">${stories.length} story${stories.length!==1?'s':''}</span>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+      ${stories.length ? stories.map(c => {
+        const thumb = firstLink(c.linkDrive) ? driveThumb(firstLink(c.linkDrive)) : '';
+        return `
+        <div>
+          ${phoneFrame(`
+            <div class="story-preview" style="height:100%;">
+              ${thumb ? `<img src="${thumb}" style="width:100%;height:100%;object-fit:cover;position:absolute;top:0;left:0;" onerror="this.style.display='none'">` : '<div class="story-preview-empty">▯</div>'}
+              <div class="story-bar"><div class="story-bar-seg active"></div><div class="story-bar-seg"></div><div class="story-bar-seg"></div></div>
+              <div class="story-user"><div class="story-avatar"></div><span class="story-uname">${STATE.client.instagram||'@cuenta'}</span></div>
+              <div class="story-caption">${(c.copy||c.titulo||'').slice(0,60)}</div>
+            </div>
+          `, { width: 170 })}
+          <div class="phone-label" style="margin-top:6px;">${c.titulo.slice(0,22)}</div>
+          <div style="text-align:center;margin-top:4px;">${statusBadge(c.estado)}</div>
+          <div style="text-align:center;margin-top:6px;">
+            <button class="btn btn-secondary btn-sm" onclick="openContenidoModalById('${c.id}')">✏️ Editar</button>
+          </div>
+        </div>`;
+      }).join('')
+      : `<div class="empty-state"><div class="empty-state-icon">▯</div><h3>Sin stories</h3><p>Agregá contenidos con ubicación "Story" e Instagram.</p></div>`}
+    </div>
+  `;
+}
+
+// ─ Banco de ideas ─
+function renderIdeas(container) {
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <h3 style="font-size:15px;font-weight:600;">Ideas de contenido</h3>
+      <button class="btn btn-primary btn-sm" onclick="openIdeaModal(null)">+ Nueva idea</button>
+    </div>
+    ${STATE.ideas.length ? `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;">
+        ${STATE.ideas.map(i => `
+          <div class="card" style="padding:14px;">
+            <div style="font-weight:600;font-size:13px;margin-bottom:8px;">${i.titulo}</div>
+            <div style="margin-bottom:6px;">${(i.plataformas||[]).map(p=>platBadge(p)).join(' ')}</div>
+            ${i.formato ? `<div style="font-size:12px;color:var(--text-muted);">Formato: ${i.formato}</div>` : ''}
+            ${i.notas ? `<div style="font-size:12px;color:var(--text-muted);margin-top:4px;">${i.notas}</div>` : ''}
+            ${(i.links || []).length ? `<div class="idea-links">${i.links.map(ideaLinkHtml).join('')}</div>` : ''}
+            <div style="display:flex;gap:6px;margin-top:10px;">
+              <button class="btn btn-primary btn-sm" onclick="promoverIdea('${i.id}')">→ Contenido</button>
+              <button class="btn btn-secondary btn-sm" onclick="openIdeaModal('${i.id}')">Editar</button>
+              <button class="btn btn-danger btn-sm" onclick="eliminarIdea('${i.id}')" title="Eliminar">${ico('trash-2', 'rojo')}</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` : `<div class="empty-state"><div class="empty-state-icon">${ico('lightbulb', 'azul', 40)}</div><h3>Sin ideas</h3><p>Guardá ideas de contenido para trabajarlas después.</p></div>`}
+  `;
+  refreshIcons();
+}
+
+// Link de referencia de una idea: se toca y abre directo (Instagram, TikTok, etc.)
+function ideaLinkHtml(url) {
+  const href = /^https?:\/\//i.test(url) ? url : 'https://' + url;
+  let host = url;
+  try { host = new URL(href).hostname.replace(/^www\./, ''); } catch (e) {}
+  return `<a class="idea-link" href="${escapeHtml(href)}" target="_blank" rel="noopener">${ico('link', 'azul', 14)}<span>${escapeHtml(host)}</span></a>`;
+}
+
+// Mientras se escribe un link en el formulario, el botón de abrir se actualiza sin redibujar el campo
+function renderDriveLinkOpen(type, idx, val) {
+  const rows = _linkBox(type)?.children;
+  const a = rows && rows[idx] && rows[idx].querySelector('a');
+  if (a) { a.href = /^https?:\/\//i.test(val) ? val : 'https://' + val; a.style.display = val ? '' : 'none'; }
+}
+
+let _editingIdea = null;
+window.openIdeaModal = function(id) {
+  _editingIdea = id ? STATE.ideas.find(i => i.id === id) : null;
+  const i = _editingIdea || {};
+  document.getElementById('idea-modal-title').textContent = _editingIdea ? 'Editar idea' : 'Nueva idea';
+  document.getElementById('if-titulo').value = i.titulo || '';
+  document.getElementById('if-notas').value = i.notas || '';
+  document.getElementById('if-formato').value = i.formato || 'Imagen';
+  document.querySelectorAll('.idea-plat-check').forEach(cb => {
+    cb.checked = (i.plataformas || ['Instagram','Facebook']).includes(cb.value);
+  });
+  _ideaLinks = Array.isArray(i.links) ? [...i.links] : [];
+  renderDriveLinks('idea');
+  document.getElementById('ideaModal').classList.remove('hidden');
+};
+
+window.eliminarIdea = async function(id) {
+  if (!confirm('¿Eliminar esta idea?')) return;
+  await deleteIdea(clientId, id);
+  STATE.ideas = STATE.ideas.filter(i => i.id !== id);
+  renderContTab('ideas');
+};
+
+window.promoverIdea = async function(id) {
+  const idea = STATE.ideas.find(i => i.id === id);
+  if (!idea) return;
+  const nuevo = { titulo: idea.titulo, plataformas: idea.plataformas||[], formato: idea.formato||'', estado: 'En proceso', notas: idea.notas||'', linkDriveRef: idea.links||[], eje:'', tipo:'', objetivo:'', fechaPub:'', ubicacion:'Feed', cuenta: STATE.client.instagram||'' };
+  const saved = await saveContenido(clientId, nuevo);
+  STATE.contenidos.push(saved);
+  STATE.ideas = STATE.ideas.filter(i => i.id !== id);
+  await deleteIdea(clientId, id).catch(() => {});
+  renderContTab('banco');
+  activeContTab = 'banco';
+  document.querySelectorAll('#cont-tabs .tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab==='banco'));
+};
+
+// ─ En proceso y revisión ─
+function renderEnProceso(container) {
+  const items = STATE.contenidos.filter(c => ['En proceso','En revisión'].includes(c.estado));
+  container.innerHTML = `
+    <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;">En proceso y en revisión (${items.length})</h3>
+    ${items.length ? `
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead><tr><th>Título</th><th>Plataforma</th><th>Estado</th><th>Fecha pub.</th><th>Notas</th><th></th></tr></thead>
+          <tbody>${items.map(c => `
+            <tr>
+              <td style="font-weight:500;">${c.titulo}</td>
+              <td>${(c.plataformas||[]).map(p=>platBadge(p)).join(' ')}</td>
+              <td>${statusBadge(c.estado)}</td>
+              <td>${fmtDate(c.fechaPub)}</td>
+              <td class="text-sm text-muted">${c.notas||''}</td>
+              <td><button class="btn btn-secondary btn-sm" onclick="openContenidoModalById('${c.id}')">Editar</button></td>
+            </tr>
+          `).join('')}</tbody>
+        </table>
+      </div>
+    ` : `<div class="empty-state"><p>No hay contenidos en proceso o revisión.</p></div>`}
+  `;
+}
+
+// ─ Métricas ─
+const METRICAS_FIELDS = [
+  { key:'seguidores_ig',   label:'Seguidores IG',      icon:'📸', type:'number' },
+  { key:'crecimiento_ig',  label:'Crecimiento IG',     icon:'📈', type:'text', placeholder:'+150' },
+  { key:'seguidores_fb',   label:'Seguidores FB',      icon:'📘', type:'number' },
+  { key:'crecimiento_fb',  label:'Crecimiento FB',     icon:'📈', type:'text', placeholder:'+40' },
+  { key:'alcance_mensual', label:'Alcance mensual',    icon:'📡', type:'number' },
+  { key:'impresiones',     label:'Impresiones',        icon:'👁', type:'number' },
+  { key:'tasa_engagement', label:'Engagement rate',    icon:'❤️', type:'text', placeholder:'3.2%' },
+  { key:'publicaciones',   label:'Publicaciones',      icon:'📋', type:'number' },
+  { key:'visitas_perfil',  label:'Visitas al perfil',  icon:'🧑', type:'number' },
+  { key:'clics_link',      label:'Clics en link bio',  icon:'🔗', type:'number' },
+  { key:'historias_views', label:'Vistas historias',   icon:'🎞', type:'number' },
+  { key:'guardados',       label:'Guardados',          icon:'🔖', type:'number' },
+];
+
+function _renderMetricasContenidosViejo(container) {
+  const m = STATE.metricas || {};
+  const cards = METRICAS_FIELDS.filter(f => m[f.key]);
+  container.innerHTML = `
+    ${cards.length ? `
+    <div class="metrics-grid" style="margin-bottom:24px;">
+      ${cards.map(f => `
+        <div class="metric-card">
+          <div style="font-size:20px;margin-bottom:4px;">${f.icon}</div>
+          <div class="metric-label">${f.label}</div>
+          <div class="metric-value">${fmtNum(m[f.key])}</div>
+        </div>
+      `).join('')}
+    </div>` : ''}
+    <div class="card">
+      <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+        <h2>📊 Métricas del mes</h2>
+        <button class="btn btn-primary btn-sm" onclick="saveMetricas(this)">Guardar métricas</button>
+      </div>
+      <div class="card-body">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;">
+          ${METRICAS_FIELDS.map(f => `
+            <div class="form-group">
+              <label style="font-size:12px;">${f.icon} ${f.label}</label>
+              <input type="${f.type}" class="form-control form-control-sm"
+                     value="${m[f.key]||''}"
+                     placeholder="${f.placeholder||'0'}"
+                     oninput="STATE.metricas['${f.key}']=this.value"
+                     style="font-size:13px;">
+            </div>
+          `).join('')}
+        </div>
+        <div style="margin-top:16px;text-align:right;">
+          <button class="btn btn-primary" onclick="saveMetricas(this)">💾 Guardar métricas</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.saveMetricas = async function(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+  try {
+    await saveMetricasData(clientId, STATE.metricas);
+    renderContTab('metricas');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Guardar métricas'; }
+  }
+};
+
+// ──────────────────────────────────────────────────────
+// PREVIEW SOCIAL
+// ──────────────────────────────────────────────────────
+window.openPreview = function(id) {
+  const c = STATE.contenidos.find(x => x.id === id);
+  if (!c) return;
+  const client = STATE.client;
+  const ig = client.instagram || '@cuenta';
+  const fbName = client.facebook || client.nombre || 'Página';
+  const imgHtml = firstLink(c.linkDrive)
+    ? `<img src="${driveThumb(firstLink(c.linkDrive))}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'">`
+    : '';
+  const copy = c.copy || c.titulo || '';
+  const plats = c.plataformas || [];
+
+  document.getElementById('preview-modal-title').textContent = `Vista previa — ${c.titulo}`;
+
+  const previews = [];
+
+  if (plats.includes('Instagram') && !normUbicacion(c.ubicacion).includes('Story')) previews.push(phoneFrame(`
+      <div class="ig-preview">
+        <div class="ig-header">
+          <div class="ig-avatar"></div>
+          <div>
+            <div class="ig-username">${ig}</div>
+            <div style="font-size:10px;color:#666;">Buenos Aires</div>
+          </div>
+          <div class="ig-more">···</div>
+        </div>
+        <div class="ig-image">${imgHtml || '📸'}</div>
+        <div class="ig-actions">❤️ 💬 ➤</div>
+        <div class="ig-likes">128 Me gusta</div>
+        <div class="ig-caption"><strong>${ig}</strong> ${copy.slice(0,120)}${copy.length>120?'...':''}</div>
+      </div>
+    `, { width: 260, label: 'Instagram Feed' }));
+
+  if (plats.includes('Instagram') && normUbicacion(c.ubicacion).includes('Story')) previews.push(phoneFrame(`
+      <div class="story-preview" style="height:100%;">
+        ${imgHtml || '<div class="story-preview-empty">▯</div>'}
+        <div class="story-bar">
+          <div class="story-bar-seg active"></div>
+          <div class="story-bar-seg"></div>
+        </div>
+        <div class="story-user">
+          <div class="story-avatar"></div>
+          <span class="story-uname">${ig}</span>
+        </div>
+        <div class="story-caption">${copy.slice(0,60)}</div>
+      </div>
+    `, { width: 200, label: 'Instagram Story' }));
+
+  if (plats.includes('Facebook')) previews.push(phoneFrame(`
+      <div class="fb-preview">
+        <div class="fb-header">
+          <div class="fb-avatar">${fbName[0]}</div>
+          <div>
+            <div class="fb-name">${fbName}</div>
+            <div class="fb-time">${fmtDate(c.fechaPub)} · 🌐</div>
+          </div>
+        </div>
+        <div class="fb-text">${copy.slice(0,150)}${copy.length>150?'...':''}</div>
+        <div class="fb-image" style="height:160px;">${imgHtml || '📘'}</div>
+        <div class="fb-reactions">👍 ❤️  24 · 3 comentarios</div>
+        <div class="fb-actions">
+          <button class="fb-action-btn">👍 Me gusta</button>
+          <button class="fb-action-btn">💬 Comentar</button>
+          <button class="fb-action-btn">↗ Compartir</button>
+        </div>
+      </div>
+    `, { width: 260, label: 'Facebook' }));
+
+  if (plats.includes('LinkedIn')) previews.push(phoneFrame(`
+      <div class="li-preview">
+        <div class="li-header">
+          <div class="li-avatar">${fbName[0]}</div>
+          <div>
+            <div class="li-name">${fbName}</div>
+            <div class="li-title">Empresa · Buenos Aires</div>
+            <div class="li-time">${fmtDate(c.fechaPub)} · 🌐</div>
+          </div>
+        </div>
+        <div class="li-text">${copy.slice(0,200)}${copy.length>200?'...':''}</div>
+        <div class="li-image" style="height:120px;">${imgHtml || '💼'}</div>
+        <div class="li-stats">👍 ❤️ 18 · 4 comentarios</div>
+        <div class="li-actions">
+          <button class="li-action-btn">👍 Recomendar</button>
+          <button class="li-action-btn">💬 Comentar</button>
+          <button class="li-action-btn">↗ Compartir</button>
+        </div>
+      </div>
+    `, { width: 260, label: 'LinkedIn' }));
+
+  document.getElementById('preview-modal-body').innerHTML = `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:4px;">Copy del post:</div>
+      <div style="font-size:13px;padding:10px 12px;background:#f8fafc;border-radius:6px;line-height:1.5;">${copy||'(sin copy)'}</div>
+    </div>
+    <div class="phone-mockup-wrap">${previews.join('')}</div>
+    ${!previews.length ? `<div class="empty-state"><p>Seleccioná una plataforma en el contenido para ver la vista previa.</p></div>` : ''}
+    <div style="margin-top:16px;display:flex;gap:8px;">
+      <button class="btn btn-secondary" onclick="openContenidoModalById('${c.id}');closePreviewModal();">✏️ Editar</button>
+      <div style="margin-left:auto;">${statusBadge(c.estado)}</div>
+    </div>
+  `;
+
+  document.getElementById('previewModal').classList.remove('hidden');
+};
+
+window.closePreviewModal = function() { document.getElementById('previewModal').classList.add('hidden'); };
+document.getElementById('closePreviewModal').addEventListener('click', closePreviewModal);
+
+// ──────────────────────────────────────────────────────
+// MODAL CONTENIDO
+// ──────────────────────────────────────────────────────
+
+// Platform → allowed ubicaciones
+const PLAT_UBIC = {
+  Instagram: ['Feed', 'Story', 'Reel', 'Carrusel'],
+  Facebook: ['Feed', 'Story', 'Reel'],
+  LinkedIn: ['Feed'],
+  'Twitter / X': ['Feed'],
+  TikTok: ['Feed', 'Story'],
+  YouTube: ['Feed', 'Shorts'],
+  'Sitio Web': ['Página', 'Banner'],
+  Blog: ['Artículo', 'Banner'],
+};
+
+// Platform → allowed formatos
+const PLAT_FORMAT = {
+  Instagram: ['Imagen', 'Video', 'Reel', 'Carrusel', 'Story', 'GIF'],
+  Facebook: ['Imagen', 'Video', 'Carrusel', 'Story', 'GIF'],
+  LinkedIn: ['Imagen', 'Video', 'Carrusel', 'Documento'],
+  'Twitter / X': ['Imagen', 'Video', 'GIF'],
+  TikTok: ['Video'],
+  YouTube: ['Video'],
+  'Sitio Web': ['Imagen', 'Video', 'GIF', 'Documento'],
+  Blog: ['Imagen', 'Video', 'GIF', 'Documento'],
+};
+
+function updatePlatFilters() {
+  const selectedPlats = Array.from(document.querySelectorAll('.plat-check:checked')).map(cb => cb.value);
+
+  // Compute union of allowed ubicaciones/formatos
+  const ubicSet = new Set();
+  const fmtSet = new Set();
+  selectedPlats.forEach(p => {
+    (PLAT_UBIC[p] || []).forEach(u => ubicSet.add(u));
+    (PLAT_FORMAT[p] || []).forEach(f => fmtSet.add(f));
+  });
+
+  const prevUbic = Array.from(document.querySelectorAll('.ubic-check:checked')).map(cb => cb.value);
+  const prevFmt = Array.from(document.querySelectorAll('.fmt-check:checked')).map(cb => cb.value);
+
+  const ubicDiv = document.getElementById('ubic-dynamic');
+  const fmtDiv = document.getElementById('formato-dynamic');
+
+  if (ubicSet.size === 0) {
+    ubicDiv.innerHTML = '<span style="font-size:11px;color:var(--text-muted);">Seleccioná plataforma primero</span>';
+    fmtDiv.innerHTML = '<span style="font-size:11px;color:var(--text-muted);">Seleccioná plataforma primero</span>';
+    return;
+  }
+
+  ubicDiv.innerHTML = [...ubicSet].map(u =>
+    `<label class="check-label"><input type="checkbox" value="${u}" class="ubic-check"${prevUbic.includes(u) ? ' checked' : ''}> ${u}</label>`
+  ).join('');
+
+  fmtDiv.innerHTML = [...fmtSet].map(f =>
+    `<label class="check-label"><input type="checkbox" value="${f}" class="fmt-check"${prevFmt.includes(f) ? ' checked' : ''}> ${f}</label>`
+  ).join('');
+}
+
+// Multiple drive links
+let _driveLinks = [];
+let _refLinks = [];
+let _ideaLinks = [];
+const _linkArr = t => t === 'drive' ? _driveLinks : (t === 'idea' ? _ideaLinks : _refLinks);
+const _linkBox = t => document.getElementById(t === 'drive' ? 'drive-links-list' : (t === 'idea' ? 'idea-links-list' : 'ref-links-list'));
+
+function renderDriveLinks(type) {
+  const arr = _linkArr(type);
+  const container = _linkBox(type);
+  container.innerHTML = arr.map((url, i) => `
+    <div style="display:flex;gap:6px;margin-bottom:6px;align-items:center;">
+      <input type="url" class="form-control" value="${url}" placeholder="${type === 'idea' ? 'https://www.instagram.com/...' : 'https://drive.google.com/...'}" oninput="updateDriveLink('${type}',${i},this.value)" style="flex:1;">
+      ${url ? `<a href="${url}" target="_blank" style="font-size:16px;color:var(--accent);white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-width:38px;min-height:38px;flex-shrink:0;" title="Abrir">↗</a>` : ''}
+      <button type="button" onclick="removeDriveLink('${type}',${i})" style="background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px;line-height:1;padding:0 2px;" title="Quitar">×</button>
+    </div>
+  `).join('');
+}
+
+window.addDriveLink = function(type) {
+  _linkArr(type).push('');
+  renderDriveLinks(type);
+};
+window.updateDriveLink = function(type, idx, val) {
+  _linkArr(type)[idx] = val;
+  renderDriveLinkOpen(type, idx, val);
+};
+window.removeDriveLink = function(type, idx) {
+  _linkArr(type).splice(idx, 1);
+  renderDriveLinks(type);
+};
+
+// Image paste/upload
+// Igual que las imágenes de Tareas (ver comentario en
+// renderTareaImgThumbs): se suben a R2 al toque en vez de embeberse como
+// base64 en el contenido. Acá el riesgo era mayor todavía -- este campo
+// acepta video/PDF/doc hasta 50MB (no solo imágenes de pocos MB como
+// Tareas), así que un archivo pesado embebido en el JSON de todos los
+// contenidos del cliente podía volver el guardado lentísimo o directamente
+// no completarse. Reporte de Vaneh (21/09): "en contenidos pasa lo mismo
+// que pasaba con tareas en cuanto a las imágenes".
+let _imgList = [];
+
+// Fila compacta con ícono + nombre (no una miniatura grande) -- mismo
+// motivo que en Tareas: adentro de la zona de pegado achicaba cada vez
+// más el lugar libre para agregar el siguiente archivo.
+function renderImgThumbs() {
+  const wrap = document.getElementById('img-thumbnails');
+  if (!wrap) return;
+  wrap.innerHTML = _imgList.map((item, i) => {
+    if (item.subiendo) {
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f8fafc;border:1px solid var(--border);border-radius:6px;font-size:12.5px;color:var(--text-muted);"><i data-lucide="loader" style="width:14px;height:14px;flex-shrink:0;"></i>Subiendo…</div>`;
+    }
+    const f = typeof item === 'string' ? { src: item, name: '', isImage: true } : item;
+    const nombre = f.filename || f.name || `Imagen ${i + 1}`;
+    const claseClick = f.isImage ? 'cont-img-thumb' : 'cont-img-file';
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f8fafc;border:1px solid var(--border);border-radius:6px;">
+      <i data-lucide="${f.isImage ? 'image' : 'file'}" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;stroke-width:1.75;"></i>
+      <span class="${claseClick}" data-idx="${i}" style="flex:1;font-size:12.5px;cursor:pointer;color:var(--primary);text-decoration:underline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(nombre)}</span>
+      <button type="button" data-idx="${i}" class="cont-img-remove" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:15px;padding:0 2px;flex-shrink:0;" title="Quitar">×</button>
+    </div>`;
+  }).join('');
+  // Antes esto escondía el cartel de "Ctrl+V para pegar" cuando ya había
+  // algo cargado -- tenía sentido cuando las miniaturas vivían ADENTRO de
+  // la misma zona de pegado, pero ahora la fila de archivos está aparte
+  // (arriba), así que la zona de pegado se deja siempre visible para
+  // seguir agregando.
+  setTimeout(refreshIcons, 30);
+  // Para poder ampliar una imagen hace falta el blob (el endpoint pide
+  // auth, no se puede apuntar un <img> directo ahí) -- se carga aparte.
+  _imgList.forEach(async (item, i) => {
+    if (item.subiendo || typeof item === 'string' || !item.isImage || item.src || !item.key) return;
+    try {
+      item.src = _imgBlobUrlCache.get(item.key) || await getArchivoBlobUrl(clientId, item.key);
+      _imgBlobUrlCache.set(item.key, item.src);
+    } catch (e) {}
+  });
+}
+
+// Click para ampliar / abrir / eliminar -- listener delegado (mismo
+// criterio que tarea-img-thumbs) para no meter la imagen entera adentro
+// de un atributo onclick, que con un base64 largo puede fallar según el
+// navegador.
+document.getElementById('img-thumbnails')?.addEventListener('click', (e) => {
+  const removeBtn = e.target.closest('.cont-img-remove');
+  if (removeBtn) { removeImg(Number(removeBtn.dataset.idx)); return; }
+  const thumb = e.target.closest('.cont-img-thumb');
+  if (thumb) {
+    const item = _imgList[Number(thumb.dataset.idx)];
+    const src = typeof item === 'string' ? item : item?.src;
+    if (src) ampliarImagen(src);
+    return;
+  }
+  const fileEl = e.target.closest('.cont-img-file');
+  if (fileEl) {
+    const item = _imgList[Number(fileEl.dataset.idx)];
+    if (item?.key) abrirArchivo(clientId, item.key, item.filename).catch(() => {});
+    else if (item?.src) window.open(item.src, '_blank');
+  }
+});
+
+window.removeImg = function(i) { _imgList.splice(i, 1); renderImgThumbs(); };
+
+// El objeto en memoria trae `src` como blob URL (para las subidas a R2)
+// que solo vale en esta sesión -- no se guarda. Lo que persiste es la
+// key (R2) o el objeto legado con base64 completo (sin key).
+function serializarImagenesCont(list) {
+  return list.filter(item => !item.subiendo).map(item => {
+    if (typeof item === 'string') return { src: item, name: '', isImage: true };
+    return item.key ? { key: item.key, filename: item.filename, size: item.size, isImage: item.isImage } : item;
+  });
+}
+
+async function addImgFromFile(file) {
+  if (!file) return;
+  const MAX = 50 * 1024 * 1024; // 50 MB
+  if (file.size > MAX) {
+    alert(`"${file.name}" pesa más de 50 MB. Subilo a Google Drive y pegá el link en el campo de Drive.`);
+    return;
+  }
+  const placeholder = { subiendo: true };
+  _imgList.push(placeholder);
+  renderImgThumbs();
+  try {
+    const subido = await uploadArchivo(clientId, file);
+    const idx = _imgList.indexOf(placeholder);
+    if (idx === -1) return;
+    _imgList[idx] = { key: subido.key, filename: file.name, size: subido.size, isImage: file.type.startsWith('image/') };
+    renderImgThumbs();
+  } catch (err) {
+    _imgList.splice(_imgList.indexOf(placeholder), 1);
+    renderImgThumbs();
+    alert('No se pudo subir el archivo: ' + (err.message || 'reintentá.'));
+  }
+}
+
+// Populate cuenta select from client data
+function populateCuentaSelect(selected) {
+  const sel = document.getElementById('cf-cuenta');
+  sel.innerHTML = '<option value="">Seleccionar cuenta...</option>';
+  const accounts = [];
+  if (STATE.client.instagram) accounts.push({ label: `Instagram: @${STATE.client.instagram}`, val: STATE.client.instagram });
+  if (STATE.client.facebook) accounts.push({ label: `Facebook: ${STATE.client.facebook}`, val: STATE.client.facebook });
+  if (STATE.client.youtube) accounts.push({ label: `YouTube: ${STATE.client.youtube}`, val: STATE.client.youtube });
+  if (STATE.client.tiktok) accounts.push({ label: `TikTok: @${STATE.client.tiktok}`, val: STATE.client.tiktok });
+  if (STATE.client.linkedin) accounts.push({ label: `LinkedIn: ${STATE.client.linkedin}`, val: STATE.client.linkedin });
+  if (STATE.client.twitter) accounts.push({ label: `Twitter / X: @${STATE.client.twitter}`, val: STATE.client.twitter });
+  if (!accounts.length) accounts.push({ label: STATE.client.nombre || STATE.client.name || clientId, val: STATE.client.nombre || clientId });
+  accounts.push({ label: 'Multicuenta', val: 'multicuenta' });
+  accounts.push({ label: 'Otra / personalizar...', val: '__custom__' });
+  accounts.forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.val; opt.textContent = a.label;
+    sel.appendChild(opt);
+  });
+  if (selected) sel.value = selected;
+  const customInput = document.getElementById('cf-cuenta-custom');
+  sel.onchange = () => {
+    customInput.style.display = sel.value === '__custom__' ? '' : 'none';
+    if (sel.value === '__custom__') customInput.focus();
+  };
+  customInput.style.display = (selected && !accounts.find(a => a.val === selected)) ? '' : 'none';
+}
+
+window.openContenidoModal = function(defaults = {}) {
+  defaults = defaults || {};
+  editingContenido = defaults?.id ? STATE.contenidos.find(c => c.id === defaults.id) : null;
+  const c = editingContenido || {};
+
+  document.getElementById('modal-cont-title').textContent = editingContenido ? 'Editar contenido' : 'Nuevo contenido';
+  document.getElementById('cf-titulo').value = c.titulo || '';
+  document.getElementById('cf-fecha').value = c.fechaPub || defaults.fechaPub || '';
+  document.getElementById('cf-estado').value = c.estado || defaults.estado || 'Idea';
+  document.getElementById('cf-eje').value = c.eje || 'Institucional';
+  document.getElementById('cf-tipo').value = c.tipo || 'Informativo';
+  document.getElementById('cf-objetivo').value = c.objetivo || 'Notoriedad';
+  document.getElementById('cf-copy').value = c.copy || '';
+  document.getElementById('cf-texto-pantalla').value = c.textoPantalla || '';
+  document.getElementById('cf-prompt-ia').value = c.promptIA || '';
+  document.getElementById('cf-sugerencia-visual').value = c.sugerenciaVisual || '';
+  document.getElementById('cf-guion').value = c.guion || '';
+  document.getElementById('cf-notas').value = c.notas || '';
+  setTimeout(() => {
+    const df = document.getElementById('cf-duracion');
+    if (df) df.value = c.duracion || '';
+    updateDuracionVisibility();
+  }, 80);
+
+  // Cuenta
+  populateCuentaSelect(c.cuenta || STATE.client.instagram || '');
+
+  // Plataformas
+  document.querySelectorAll('.plat-check').forEach(cb => {
+    cb.checked = (c.plataformas || defaults.plataformas || []).includes(cb.value);
+  });
+  updatePlatFilters();
+
+  // Ubicacion & Formato — set after filters rendered
+  const ubicArr = Array.isArray(c.ubicacion) ? c.ubicacion : (c.ubicacion ? [c.ubicacion] : defaults.ubicacion || []);
+  const fmtArr = Array.isArray(c.formato) ? c.formato : (c.formato ? [c.formato] : []);
+  setTimeout(() => {
+    document.querySelectorAll('.ubic-check').forEach(cb => cb.checked = ubicArr.includes(cb.value));
+    document.querySelectorAll('.fmt-check').forEach(cb => cb.checked = fmtArr.includes(cb.value));
+  }, 30);
+
+  // Dimensiones
+  const dimArr = Array.isArray(c.dimensiones) ? c.dimensiones : [];
+  document.querySelectorAll('.dim-check').forEach(cb => cb.checked = dimArr.includes(cb.value));
+
+  // Pauta
+  const pautaVal = c.pauta || 'organico';
+  const pautaRadio = document.querySelector(`input[name="cf-pauta"][value="${pautaVal}"]`);
+  if (pautaRadio) pautaRadio.checked = true;
+  document.getElementById('pauta-hint').style.display = pautaVal !== 'organico' ? '' : 'none';
+
+  // Multiple links
+  _driveLinks = Array.isArray(c.linkDrive) ? [...c.linkDrive] : (c.linkDrive ? [c.linkDrive] : []);
+  _refLinks = Array.isArray(c.linkDriveRef) ? [...c.linkDriveRef] : (c.linkDriveRef ? [c.linkDriveRef] : []);
+  renderDriveLinks('drive');
+  renderDriveLinks('ref');
+
+  // Images
+  _imgList = Array.isArray(c.imagenes) ? [...c.imagenes] : [];
+  renderImgThumbs();
+
+
+  document.getElementById('deleteContenidoBtn').style.display = editingContenido ? '' : 'none';
+  const archBtn = document.getElementById('archiveContenidoBtn');
+  archBtn.style.display = editingContenido ? '' : 'none';
+  archBtn.textContent = c.archivado ? 'Restaurar' : 'Archivar';
+  renderComments('cont', c.comentarios || []);
+  document.getElementById('cont-comment-input').value = '';
+  const _cnote = document.getElementById('cont-new-note');
+  if (_cnote) _cnote.style.display = editingContenido ? 'none' : '';
+  const _cinputWrap = document.getElementById('cont-comment-input-wrap');
+  if (_cinputWrap) _cinputWrap.style.display = editingContenido ? '' : 'none';
+  const _copyLinkContBtn = document.getElementById('copyLinkContenidoBtn');
+  _copyLinkContBtn.classList.toggle('hidden', !editingContenido);
+  _copyLinkContBtn.onclick = () => copiarLinkItem('contenido', c.id);
+  document.getElementById('contenidoModal').classList.remove('hidden');
+};
+
+window.openContenidoModalById = function(id) { openContenidoModal({ id }); };
+
+function closeContenidoModal() { document.getElementById('contenidoModal').classList.add('hidden'); }
+document.getElementById('closeContenidoModal').addEventListener('click', closeContenidoModal);
+document.getElementById('closeContenidoModal2').addEventListener('click', closeContenidoModal);
+
+// Platform checkboxes → update formats
+document.getElementById('plat-checks').addEventListener('change', () => { updatePlatFilters(); updateDuracionVisibility(); });
+
+function updateDuracionVisibility() {
+  setTimeout(() => {
+    const videoFormats = ['Reel','Video','TikTok','Story','YouTube','Short'];
+    const hasVideo = Array.from(document.querySelectorAll('.fmt-check:checked')).some(cb => videoFormats.some(v => cb.value.includes(v)));
+    const g = document.getElementById('cf-duracion-group');
+    if (g) g.style.display = hasVideo ? '' : 'none';
+  }, 60);
+}
+
+// Pauta radios → show/hide hint
+document.querySelectorAll('input[name="cf-pauta"]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.getElementById('pauta-hint').style.display = r.value !== 'organico' ? '' : 'none';
+  });
+});
+
+// Image paste & file pick — upload via button onclick in HTML, paste via Ctrl+V listener below
+document.getElementById('img-file-input').addEventListener('change', e => {
+  [...e.target.files].forEach(addImgFromFile);
+  e.target.value = '';
+});
+document.addEventListener('paste', e => {
+  const contenidoOpen = !document.getElementById('contenidoModal').classList.contains('hidden');
+  const tareaOpen = !document.getElementById('tareaModal').classList.contains('hidden');
+  const webTaskOpen = !document.getElementById('webTaskModal').classList.contains('hidden');
+  if (!contenidoOpen && !tareaOpen && !webTaskOpen) return;
+  // Si el foco está en el editor RTE de tarea, dejar que el navegador maneje el paste de texto
+  if (tareaOpen && document.activeElement && document.activeElement.id === 'tf-notas') {
+    const items = e.clipboardData?.items || [];
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        addTareaImgFromFile(item.getAsFile());
+        return;
+      }
+    }
+    return; // texto normal: el browser lo inserta solo
+  }
+  const items = e.clipboardData?.items || [];
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      if (contenidoOpen) addImgFromFile(item.getAsFile());
+      else if (webTaskOpen) addWtImgFromFile(item.getAsFile());
+      else addTareaImgFromFile(item.getAsFile());
+      return;
+    }
+  }
+});
+
+document.getElementById('saveContenidoBtn').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  if (btn.disabled) return;
+  const titulo = document.getElementById('cf-titulo').value.trim();
+  if (!titulo) { alert('El título es obligatorio.'); document.getElementById('cf-titulo').focus(); return; }
+  if (_imgList.some(i => i.subiendo)) { alert('Esperá a que termine de subir el archivo.'); return; }
+
+  const cuentaSel = document.getElementById('cf-cuenta');
+  const cuentaCustom = document.getElementById('cf-cuenta-custom');
+  const cuenta = cuentaSel.value === '__custom__' ? cuentaCustom.value.trim() : cuentaSel.value;
+  if (!cuenta) { alert('Seleccioná o ingresá una cuenta.'); cuentaSel.focus(); return; }
+
+  const plats = Array.from(document.querySelectorAll('.plat-check:checked')).map(cb => cb.value);
+  if (!plats.length) { alert('Seleccioná al menos una plataforma.'); return; }
+
+  const formatos = Array.from(document.querySelectorAll('.fmt-check:checked')).map(cb => cb.value);
+  if (!formatos.length) { alert('Seleccioná al menos un formato.'); return; }
+  btn.disabled = true; btn.textContent = 'Guardando…';
+
+  const ubicacion = Array.from(document.querySelectorAll('.ubic-check:checked')).map(cb => cb.value);
+  const dimensiones = Array.from(document.querySelectorAll('.dim-check:checked')).map(cb => cb.value);
+  const pauta = document.querySelector('input[name="cf-pauta"]:checked')?.value || 'organico';
+
+  // Auto-vínculo con un guion suelto del repositorio (pedido de Vaneh:
+  // "el título es el que se transforma en contenido después") -- solo
+  // al crear un contenido nuevo, sin guion tipeado a mano todavía.
+  let guionTexto = document.getElementById('cf-guion').value;
+  let guionAVincular = null;
+  if (!editingContenido && !guionTexto.trim()) {
+    guionAVincular = buscarGuionSueltoPorTitulo(titulo);
+    if (guionAVincular) guionTexto = guionAVincular.texto || '';
+  }
+
+  const obj = {
+    ...(editingContenido || {}),
+    titulo,
+    fechaPub: document.getElementById('cf-fecha').value,
+    estado: document.getElementById('cf-estado').value,
+    cuenta,
+    plataformas: plats,
+    ubicacion,
+    formato: formatos,
+    dimensiones,
+    eje: document.getElementById('cf-eje').value,
+    tipo: document.getElementById('cf-tipo').value,
+    objetivo: document.getElementById('cf-objetivo').value,
+    copy: document.getElementById('cf-copy').value,
+    textoPantalla: document.getElementById('cf-texto-pantalla').value,
+    promptIA: document.getElementById('cf-prompt-ia').value,
+    sugerenciaVisual: document.getElementById('cf-sugerencia-visual').value,
+    guion: guionTexto,
+    pauta,
+    linkDrive: _driveLinks.filter(Boolean),
+    linkDriveRef: _refLinks.filter(Boolean),
+    imagenes: serializarImagenesCont(_imgList),
+    notas: document.getElementById('cf-notas').value,
+    comentarios: editingContenido?.comentarios || [],
+  };
+
+  try {
+    const saved = await saveContenido(clientId, obj);
+    if (editingContenido) {
+      const i = STATE.contenidos.findIndex(c => c.id === saved.id);
+      STATE.contenidos[i] = saved;
+    } else {
+      STATE.contenidos.push(saved);
+    }
+    if (guionAVincular) {
+      const gSaved = await saveGuion(clientId, { ...guionAVincular, contenidoId: saved.id }, STATE.guiones);
+      STATE.guiones[STATE.guiones.findIndex(g => g.id === gSaved.id)] = gSaved;
+    } else if (guionTexto.trim()) {
+      // El guion se tipeó directo en el modal de contenido (no vino del
+      // repositorio suelto) -- antes solo quedaba guardado en el
+      // contenido y nunca aparecía en la sección Guiones. Pedido de
+      // Vaneh (11/10): "cuando cargo un contenido... esos guiones no
+      // aparecen en la lista de guiones" -- la relación tiene que andar
+      // en los dos sentidos, no solo Guiones -> Contenido.
+      const gExistente = STATE.guiones.find(g => g.contenidoId === saved.id);
+      if (gExistente) {
+        if (gExistente.texto !== guionTexto || gExistente.titulo !== titulo) {
+          const gSaved = await saveGuion(clientId, { ...gExistente, titulo, texto: guionTexto }, STATE.guiones);
+          STATE.guiones[STATE.guiones.findIndex(g => g.id === gSaved.id)] = gSaved;
+        }
+      } else {
+        const gSaved = await saveGuion(clientId, { titulo, texto: guionTexto, contenidoId: saved.id, fecha: new Date().toISOString().split('T')[0] }, STATE.guiones);
+        STATE.guiones.push(gSaved);
+      }
+    }
+    closeContenidoModal();
+    renderContTab(activeContTab);
+    if (currentSection === 'home') renderSection('home');
+  } finally {
+    const b = document.getElementById('saveContenidoBtn');
+    if (b) { b.disabled = false; b.textContent = 'Guardar'; }
+  }
+});
+
+document.getElementById('deleteContenidoBtn').addEventListener('click', async () => {
+  if (!editingContenido || !confirm('¿Eliminar este contenido?')) return;
+  await deleteContenido(clientId, editingContenido.id);
+  STATE.contenidos = STATE.contenidos.filter(c => c.id !== editingContenido.id);
+  closeContenidoModal();
+  renderContTab(activeContTab);
+});
+document.getElementById('archiveContenidoBtn').addEventListener('click', async () => {
+  if (!editingContenido) return;
+  editingContenido.archivado = !editingContenido.archivado;
+  const saved = await saveContenido(clientId, editingContenido);
+  const i = STATE.contenidos.findIndex(c => c.id === editingContenido.id);
+  if (i > -1) STATE.contenidos[i] = saved;
+  closeContenidoModal();
+  renderContTab(activeContTab);
+});
+
+window.desarchivarContenido = async function(id) {
+  const c = STATE.contenidos.find(x => x.id === id);
+  if (!c) return;
+  c.archivado = false;
+  toastApp('Contenido restaurado.');
+  const saved = await saveContenido(clientId, c);
+  const i = STATE.contenidos.findIndex(x => x.id === id);
+  if (i > -1) STATE.contenidos[i] = saved;
+  renderContTab(activeContTab);
+};
+
+window.eliminarContenidoDirecto = async function(id) {
+  if (!confirm('¿Eliminar este contenido?')) return;
+  await deleteContenido(clientId, id);
+  STATE.contenidos = STATE.contenidos.filter(c => c.id !== id);
+  renderContTab(activeContTab);
+};
+
+// ──────────────────────────────────────────────────────
+// GUIONES -- repositorio propio, vinculado o no a un contenido.
+// Pedido de Vaneh (21/09): poder cargar/acumular guiones sueltos (ej.
+// grabar 60 videos de una) sin necesidad de crear el contenido primero,
+// y que el título sea lo que después conecta el guion con el contenido
+// real cuando se termine de crear. Vive en STATE.guiones, cargado en la
+// wave 2 de cargarDatosSecundarios junto con campañas/ideas/plan.
+// ──────────────────────────────────────────────────────
+let editingGuion = null;
+let _guionesBusqueda = '';
+let _guionesVerArchivados = false;
+
+function normGuionTitulo(s) { return normImportTexto(s); }
+
+// Si se crea un contenido NUEVO con un título que matchea un guion suelto
+// (sin contenido vinculado todavía) y el contenido no trae ya su propio
+// texto de guion, se linkea solo -- así se cumple "el título es el que
+// se transforma en contenido después" sin tener que hacerlo a mano.
+function buscarGuionSueltoPorTitulo(titulo) {
+  const n = normGuionTitulo(titulo);
+  if (!n) return null;
+  return STATE.guiones.find(g => !g.contenidoId && normGuionTitulo(g.titulo) === n) || null;
+}
+
+window.openGuionModal = function(g) {
+  editingGuion = g || null;
+  document.getElementById('modal-guion-title').textContent = editingGuion ? 'Editar guion' : 'Nuevo guion';
+  document.getElementById('gn-titulo').value = editingGuion?.titulo || '';
+  document.getElementById('gn-texto').value = editingGuion?.texto || '';
+  const sel = document.getElementById('gn-vinculo');
+  sel.innerHTML = '<option value="">-- Sin vincular a ningún contenido --</option>' +
+    STATE.contenidos.slice().sort((a, b) => (a.titulo || '').localeCompare(b.titulo || ''))
+      .map(c => `<option value="${c.id}" ${editingGuion?.contenidoId === c.id ? 'selected' : ''}>${escapeHtml(c.titulo)}</option>`).join('');
+  document.getElementById('deleteGuionBtn').style.display = editingGuion ? '' : 'none';
+  document.getElementById('guionModal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('gn-titulo').focus(), 50);
+};
+
+window.openGuionModalById = function(id) {
+  const g = STATE.guiones.find(x => x.id === id);
+  if (g) openGuionModal(g);
+};
+
+function closeGuionModal() { document.getElementById('guionModal').classList.add('hidden'); }
+document.getElementById('closeGuionModal').addEventListener('click', closeGuionModal);
+
+document.getElementById('saveGuionBtn').addEventListener('click', async () => {
+  const titulo = document.getElementById('gn-titulo').value.trim();
+  if (!titulo) { alert('El título es obligatorio.'); document.getElementById('gn-titulo').focus(); return; }
+  const contenidoId = document.getElementById('gn-vinculo').value || null;
+  const texto = document.getElementById('gn-texto').value;
+  const obj = { ...(editingGuion || {}), titulo, texto, contenidoId, fecha: editingGuion?.fecha || new Date().toISOString().split('T')[0] };
+  const btn = document.getElementById('saveGuionBtn');
+  btn.disabled = true; btn.textContent = 'Guardando…';
+  try {
+    const saved = await saveGuion(clientId, obj, STATE.guiones);
+    if (editingGuion) STATE.guiones[STATE.guiones.findIndex(g => g.id === saved.id)] = saved;
+    else STATE.guiones.push(saved);
+    // Vinculado -- se copia también al campo `guion` del contenido, para
+    // que abrirlo desde ahí (o desde el import de Excel) muestre lo mismo.
+    if (contenidoId) {
+      const c = STATE.contenidos.find(x => x.id === contenidoId);
+      if (c && c.guion !== texto) {
+        c.guion = texto;
+        const savedC = await saveContenido(clientId, c, STATE.contenidos);
+        STATE.contenidos[STATE.contenidos.findIndex(x => x.id === savedC.id)] = savedC;
+      }
+    }
+    closeGuionModal();
+    renderSection('guiones');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Guardar';
+  }
+});
+
+document.getElementById('deleteGuionBtn').addEventListener('click', async () => {
+  if (!editingGuion || !confirm('¿Eliminar este guion del repositorio? (el contenido vinculado, si lo tiene, no se borra)')) return;
+  await deleteGuion(clientId, editingGuion.id, STATE.guiones);
+  STATE.guiones = STATE.guiones.filter(g => g.id !== editingGuion.id);
+  closeGuionModal();
+  renderSection('guiones');
+});
+
+window.abrirTeleprompterDesdeModalGuion = function() {
+  abrirTeleprompterConTexto(document.getElementById('gn-texto').value);
+};
+
+window.archivarGuion = async function(id) {
+  const g = STATE.guiones.find(x => x.id === id);
+  if (!g) return;
+  g.archivado = !g.archivado;
+  const saved = await saveGuion(clientId, g, STATE.guiones);
+  STATE.guiones[STATE.guiones.findIndex(x => x.id === id)] = saved;
+  renderSection('guiones');
+};
+
+window.eliminarGuionDirecto = async function(id) {
+  if (!confirm('¿Eliminar este guion del repositorio?')) return;
+  await deleteGuion(clientId, id, STATE.guiones);
+  STATE.guiones = STATE.guiones.filter(g => g.id !== id);
+  renderSection('guiones');
+};
+
+function guionRowHtml(g) {
+  const contenido = g.contenidoId ? STATE.contenidos.find(c => c.id === g.contenidoId) : null;
+  return `
+    <div class="card" style="padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:200px;cursor:pointer;" onclick="openGuionModalById('${g.id}')">
+        <div style="font-weight:600;font-size:13.5px;">${escapeHtml(g.titulo)}</div>
+        ${contenido
+          ? `<div style="font-size:11px;color:var(--text-muted);">${ico('link', 'azul', 12)} vinculado a: ${escapeHtml(contenido.titulo)}</div>`
+          : `<div style="font-size:11px;color:#94a3b8;">Sin vincular</div>`}
+      </div>
+      <button class="btn btn-secondary btn-sm" title="Abrir teleprompter" onclick="event.stopPropagation();abrirTeleprompterGuion('${g.id}')">${ico('monitor-play')}</button>
+      <button class="btn btn-secondary btn-sm" title="Editar" onclick="event.stopPropagation();openGuionModalById('${g.id}')">${ico('pencil')}</button>
+      <button class="btn btn-secondary btn-sm" title="${g.archivado ? 'Restaurar' : 'Archivar'}" onclick="event.stopPropagation();archivarGuion('${g.id}')">${g.archivado ? ico('archive-restore') : ico('archive')}</button>
+      <button class="btn btn-danger btn-sm" title="Eliminar" onclick="event.stopPropagation();eliminarGuionDirecto('${g.id}')">${ico('trash-2','rojo')}</button>
+    </div>`;
+}
+
+function renderGuionesSection(container) {
+  const busqueda = _guionesBusqueda;
+  const base = STATE.guiones.filter(g => !!g.archivado === _guionesVerArchivados)
+    .filter(g => !busqueda || normGuionTitulo(g.titulo).includes(busqueda));
+  const all = base.slice().sort((a, b) => (a.fecha || '') < (b.fecha || '') ? 1 : -1);
+
+  const hoy = new Date();
+  const mesActualClave = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+
+  const grupos = new Map(); // fecha (YYYY-MM-DD, o 'sin-fecha') -> guiones
+  all.forEach(g => {
+    const clave = g.fecha || 'sin-fecha';
+    if (!grupos.has(clave)) grupos.set(clave, []);
+    grupos.get(clave).push(g);
+  });
+  const fechasConFecha = [...grupos.keys()].filter(f => f !== 'sin-fecha').sort((a, b) => b.localeCompare(a));
+  const mesesMap = new Map(); // mes (YYYY-MM) -> fechas del mes
+  fechasConFecha.forEach(f => {
+    const mes = f.slice(0, 7);
+    if (!mesesMap.has(mes)) mesesMap.set(mes, []);
+    mesesMap.get(mes).push(f);
+  });
+
+  const diaGroupHtml = (label, items) => `
+    <div style="margin:8px 0;">
+      <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px;">${label}</div>
+      ${items.map(guionRowHtml).join('')}
+    </div>`;
+
+  const mesesHtml = [...mesesMap.keys()].map(mes => {
+    const fechas = mesesMap.get(mes);
+    const total = fechas.reduce((n, f) => n + grupos.get(f).length, 0);
+    return `
+      <details class="banco-mes-group" ${mes === mesActualClave ? 'open' : ''}>
+        <summary class="banco-mes-header">${mesAnioLabel(mes)} <span class="banco-mes-count">${total}</span></summary>
+        ${fechas.map(f => diaGroupHtml(fmtDate(f), grupos.get(f))).join('')}
+      </details>`;
+  }).join('');
+
+  const sinFechaHtml = grupos.has('sin-fecha') ? diaGroupHtml(ico('pin', 'azul', 14) + ' Sin fecha', grupos.get('sin-fecha')) : '';
+
+  const totalActivos = STATE.guiones.filter(g => !g.archivado).length;
+  const totalArchivados = STATE.guiones.filter(g => g.archivado).length;
+
+  container.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button class="btn btn-sm ${!_guionesVerArchivados ? 'btn-primary' : 'btn-secondary'}" onclick="cambiarGuionesVista(false)">Activos (${totalActivos})</button>
+      <button class="btn btn-sm ${_guionesVerArchivados ? 'btn-primary' : 'btn-secondary'}" onclick="cambiarGuionesVista(true)">Archivados (${totalArchivados})</button>
+    </div>
+    ${all.length ? sinFechaHtml + mesesHtml : `<div class="empty-state"><p>${busqueda ? 'Sin guiones con ese título.' : (_guionesVerArchivados ? 'No hay guiones archivados.' : 'Sin guiones todavía -- creá uno nuevo o traelo desde un contenido que ya tenga guion escrito.')}</p></div>`}
+  `;
+}
+
+window.cambiarGuionesVista = function(archivados) {
+  _guionesVerArchivados = archivados;
+  renderSection('guiones');
+};
+
+// ── Traer guion desde un contenido existente (dirección inversa) ──
+window.openTraerGuionModal = function() {
+  const disponibles = STATE.contenidos.filter(c => (c.guion || '').trim());
+  const box = document.getElementById('traer-guion-list');
+  box.innerHTML = disponibles.length ? disponibles.map(c => {
+    const yaVinculado = STATE.guiones.some(g => g.contenidoId === c.id);
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;">
+        <div style="flex:1;font-size:13px;">${escapeHtml(c.titulo)} ${yaVinculado ? '<span style="font-size:10px;color:#94a3b8;">(ya está en el repositorio)</span>' : ''}</div>
+        <button class="btn btn-secondary btn-sm" onclick="traerGuionDeContenido('${c.id}')">${yaVinculado ? 'Actualizar' : ico('download') + ' Traer'}</button>
+      </div>`;
+  }).join('') : '<p style="font-size:12px;color:var(--text-muted);">Ningún contenido tiene guion escrito todavía.</p>';
+  document.getElementById('traerGuionModal').classList.remove('hidden');
+  refreshIcons();
+};
+
+function closeTraerGuionModal() { document.getElementById('traerGuionModal').classList.add('hidden'); }
+document.getElementById('closeTraerGuionModal').addEventListener('click', closeTraerGuionModal);
+
+window.traerGuionDeContenido = async function(contenidoId) {
+  const c = STATE.contenidos.find(x => x.id === contenidoId);
+  if (!c) return;
+  const existente = STATE.guiones.find(g => g.contenidoId === contenidoId);
+  const obj = { ...(existente || {}), titulo: c.titulo, texto: c.guion || '', contenidoId, fecha: existente?.fecha || new Date().toISOString().split('T')[0] };
+  const saved = await saveGuion(clientId, obj, STATE.guiones);
+  if (existente) STATE.guiones[STATE.guiones.findIndex(g => g.id === saved.id)] = saved;
+  else STATE.guiones.push(saved);
+  closeTraerGuionModal();
+  renderSection('guiones');
+};
+
+// ──────────────────────────────────────────────────────
+// IMPORTAR CONTENIDOS DESDE EXCEL
+// ──────────────────────────────────────────────────────
+const IMPORT_ESTADOS = ['Idea', 'En proceso', 'En revisión', 'Aprobado', 'Programado', 'Publicado'];
+const IMPORT_PAUTA_MAP = {
+  'solo organico': 'organico',
+  'si dark post': 'dark',
+  'si dark + organico': 'dark-organico',
+  'si dark organico': 'dark-organico',
+  organico: 'organico',
+  dark: 'dark',
+  'dark-organico': 'dark-organico',
+};
+const EXPORT_PAUTA_LABEL = { organico: 'Solo orgánico', dark: 'Sí – Dark post', 'dark-organico': 'Sí – Dark + orgánico' };
+// header normalizado (sin acentos, minúscula) -> campo del contenido
+const IMPORT_HEADER_MAP = {
+  'titulo del contenido': 'titulo',
+  titulo: 'titulo',
+  'fecha de publicacion': 'fechaPub',
+  fecha: 'fechaPub',
+  estado: 'estado',
+  cuenta: 'cuenta',
+  plataformas: 'plataformas',
+  plataforma: 'plataformas',
+  ubicacion: 'ubicacion',
+  formato: 'formato',
+  dimensiones: 'dimensiones',
+  dimension: 'dimensiones',
+  'eje de comunicacion': 'eje',
+  eje: 'eje',
+  'tipo de contenido': 'tipo',
+  tipo: 'tipo',
+  objetivo: 'objetivo',
+  'copy / texto del post': 'copy', // compat con plantillas viejas (una sola columna) -- se sube como copy
+  'copy texto del post': 'copy',
+  copy: 'copy',
+  'texto en pantalla': 'textoPantalla',
+  'texto pantalla': 'textoPantalla',
+  'prompt sugerido para ia': 'promptIA',
+  'prompt ia': 'promptIA',
+  'sugerencia de pieza creativa': 'sugerenciaVisual',
+  'sugerencia de pieza creativa visual / secuencia': 'sugerenciaVisual',
+  'sugerencia visual': 'sugerenciaVisual',
+  'sugerencia creativa': 'sugerenciaVisual',
+  guion: 'guion',
+  script: 'guion',
+  pauta: 'pauta',
+  'link pieza terminada': 'linkDrive',
+  'link material de referencia': 'linkDriveRef',
+  'notas internas': 'notas',
+  notas: 'notas',
+  'asignar a': 'asignado',
+  asignado: 'asignado',
+  responsable: 'asignado',
+  'responsable sugerido': 'asignado',
+};
+
+const ACCENT_MAP = { á: 'a', é: 'e', í: 'i', ó: 'o', ú: 'u', ñ: 'n', ü: 'u' };
+
+function normalizeHeader(h) {
+  return String(h || '')
+    .toLowerCase()
+    .replace(/[áéíóúñü]/g, ch => ACCENT_MAP[ch] || ch)
+    .replace(/[^a-z0-9/ ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function importParseFecha(val) {
+  if (!val) return '';
+  if (val instanceof Date) {
+    const y = val.getFullYear(), m = String(val.getMonth() + 1).padStart(2, '0'), d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(val).trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dmy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  return s;
+}
+
+function importSplitMulti(val) {
+  if (!val) return [];
+  return String(val).split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function importParsePauta(val) {
+  const norm = normalizeHeader(val).replace(/–|—/g, '-');
+  return IMPORT_PAUTA_MAP[norm] || 'organico';
+}
+
+// Resuelve la columna "Asignado" del Excel contra la misma lista de
+// candidatos que ya usa el selector "Asignar a" del modal (contacto del
+// cliente + usuarios del cliente + equipo asignado) -- matchea por
+// nombre o por email, sin importar mayúsculas/espacios.
+function importResolverAsignado(val) {
+  const clienteComoAsignado = STATE.client.email ? { nombre: STATE.client.nombre || STATE.client.name || 'Cliente', email: STATE.client.email } : null;
+  const n = String(val || '').trim().toLowerCase();
+  // Pedido de Vaneh (28/09): si la fila no trae "Asignar a", el responsable
+  // por default de resolver ese contenido es el cliente mismo (antes
+  // quedaba "sin asignar") -- no hace falta que cada fila del Excel
+  // especifique explícitamente al cliente para que quede asignado a él.
+  if (!n) return clienteComoAsignado;
+  const candidatos = [];
+  if (clienteComoAsignado) candidatos.push(clienteComoAsignado);
+  (STATE.client.usuarios || []).forEach(u => candidatos.push(u));
+  _equipoDelCliente.forEach(c => candidatos.push(c));
+  const match = candidatos.find(c => (c.nombre || '').trim().toLowerCase() === n || (c.email || '').trim().toLowerCase() === n);
+  return match ? { email: match.email, nombre: match.nombre } : null;
+}
+
+// ── Importar Excel: detectar si una fila ya existe y qué cambió ──────
+// Pedido explícito de Vaneh: al volver a subir el mismo calendario (con
+// alguna fila editada), el import tiene que reconocer que ese contenido
+// ya está cargado -- no duplicarlo -- mostrar qué campos cambiaron, y
+// dejar elegir por fila si se reemplaza o se omite. Se matchea por
+// título + cuenta (normalizados) porque el título solo puede repetirse
+// entre cuentas distintas, y la fecha puede cambiar sin que sea "otro"
+// contenido (reprogramar no debería crear un duplicado).
+const IMPORT_DIFF_FIELDS = [
+  { key: 'cuenta', label: 'Cuenta' },
+  { key: 'fechaPub', label: 'Fecha de publicación' },
+  { key: 'estado', label: 'Estado' },
+  { key: 'plataformas', label: 'Plataformas', arr: true },
+  { key: 'ubicacion', label: 'Ubicación', arr: true },
+  { key: 'formato', label: 'Formato', arr: true },
+  { key: 'dimensiones', label: 'Dimensiones', arr: true },
+  { key: 'eje', label: 'Eje de comunicación' },
+  { key: 'tipo', label: 'Tipo de contenido' },
+  { key: 'objetivo', label: 'Objetivo' },
+  { key: 'copy', label: 'Copy' },
+  { key: 'textoPantalla', label: 'Texto en pantalla' },
+  { key: 'promptIA', label: 'Prompt sugerido para IA' },
+  { key: 'sugerenciaVisual', label: 'Sugerencia de pieza creativa' },
+  { key: 'guion', label: 'Guion' },
+  { key: 'pauta', label: 'Pauta' },
+  { key: 'linkDrive', label: 'Link pieza terminada', arr: true },
+  { key: 'linkDriveRef', label: 'Link material de referencia', arr: true },
+  { key: 'notas', label: 'Notas internas' },
+  { key: 'asignado', label: 'Asignado a', esAsignado: true },
+];
+
+function normImportTexto(s) { return String(s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+
+function importValoresIguales(a, b, esArray) {
+  if (esArray) {
+    const A = (a || []).map(x => normImportTexto(x)).filter(Boolean).sort();
+    const B = (b || []).map(x => normImportTexto(x)).filter(Boolean).sort();
+    return A.length === B.length && A.every((v, i) => v === B[i]);
+  }
+  return normImportTexto(a) === normImportTexto(b);
+}
+
+function importDiffContenido(existente, entrante) {
+  return IMPORT_DIFF_FIELDS.filter(f => {
+    if (f.esAsignado) {
+      return (existente.asignado?.email || '').toLowerCase() !== (entrante.asignado?.email || '').toLowerCase();
+    }
+    return !importValoresIguales(existente[f.key], entrante[f.key], f.arr);
+  });
+}
+
+// Clasifica cada fila válida contra STATE.contenidos: 'nuevo' (no existe
+// todavía), 'igual' (existe y no cambió nada) o 'cambio' (existe pero
+// algún campo difiere -- acá se decide por fila, default "reemplazar").
+//
+// 07/09: Vaneh reportó que contenidos que YA estaban cargados se le
+// importaban de nuevo como duplicados en vez de detectarse. Causa real:
+// acá se exigía que título Y cuenta coincidieran exacto, pero "cuenta" se
+// carga distinto según el origen -- un contenido creado a mano en el Hub
+// arranca con el Instagram del cliente por default, mientras que la
+// cuenta que trae el Excel es texto libre de esa columna (puede decir
+// "Lambo" en vez de "@lambo_oficial", con mayúscula distinta, etc.) --
+// aunque el título sea idéntico, con una cuenta escrita distinto nunca
+// matcheaba y quedaba como "nuevo" (duplicado real, sin ni siquiera
+// preguntar reemplazar/omitir). Ahora matchea por TÍTULO primero; la
+// cuenta solo se usa para desempatar cuando hay más de un contenido
+// existente con exactamente el mismo título (ahí sí puede ser dos cosas
+// distintas de cuentas distintas).
+function importClasificarFilas(filas) {
+  return filas.map(row => {
+    const porTitulo = STATE.contenidos.filter(c => normImportTexto(c.titulo) === normImportTexto(row.titulo));
+    let match = null;
+    if (porTitulo.length === 1) match = porTitulo[0];
+    else if (porTitulo.length > 1) {
+      match = porTitulo.find(c => normImportTexto(c.cuenta) === normImportTexto(row.cuenta)) || porTitulo[0];
+    }
+    if (!match) return { tipo: 'nuevo', row };
+    const cambios = importDiffContenido(match, row);
+    if (!cambios.length) return { tipo: 'igual', row, match };
+    return { tipo: 'cambio', row, match, cambios, accion: 'reemplazar' };
+  });
+}
+
+let _importRows = []; // filas clasificadas ({tipo, row, match?, cambios?, accion?}), listas para importar
+
+function openImportModal() {
+  _importRows = [];
+  document.getElementById('import-file-input').value = '';
+  document.getElementById('import-status').textContent = '';
+  document.getElementById('import-preview').innerHTML = '';
+  document.getElementById('confirmImportBtn').disabled = true;
+  document.getElementById('importContenidoModal').classList.remove('hidden');
+  loadXLSXLib();
+}
+window.openImportModal = openImportModal;
+
+let _xlsxLoadPromise = null;
+function loadXLSXLib() {
+  if (window.XLSX) return Promise.resolve();
+  if (_xlsxLoadPromise) return _xlsxLoadPromise;
+  _xlsxLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  return _xlsxLoadPromise;
+}
+
+function closeImportModal() {
+  document.getElementById('importContenidoModal').classList.add('hidden');
+}
+
+// ── Exportar Excel: bajar el calendario de contenidos ya cargado ─────
+// Pedido de Vaneh (18/09): poder exportar el calendario de Contenidos
+// para hacer modificaciones masivas afuera y volver a subirlo. Mismas
+// columnas y mismo orden que la plantilla de importación, para que el
+// archivo exportado se pueda volver a importar sin tocar encabezados.
+const EXPORT_CONTENIDOS_HEADERS = ['Título del contenido', 'Fecha de publicación', 'Estado', 'Cuenta', 'Plataformas', 'Ubicación', 'Formato', 'Dimensiones', 'Eje de comunicación', 'Tipo de contenido', 'Objetivo', 'Copy', 'Texto en pantalla', 'Prompt sugerido para IA', 'Sugerencia de pieza creativa', 'Guion', 'Pauta', 'Link pieza terminada', 'Link material de referencia', 'Notas internas', 'Asignado a'];
+
+function contenidoAFilaExport(c) {
+  return [
+    c.titulo || '',
+    c.fechaPub || '',
+    c.estado || '',
+    c.cuenta || '',
+    (c.plataformas || []).join(', '),
+    (c.ubicacion || []).join(', '),
+    (c.formato || []).join(', '),
+    (c.dimensiones || []).join(', '),
+    c.eje || '',
+    c.tipo || '',
+    c.objetivo || '',
+    c.copy || '',
+    c.textoPantalla || '',
+    c.promptIA || '',
+    c.sugerenciaVisual || '',
+    c.guion || '',
+    EXPORT_PAUTA_LABEL[c.pauta] || '',
+    (c.linkDrive || []).join(', '),
+    (c.linkDriveRef || []).join(', '),
+    c.notas || '',
+    c.asignado ? (c.asignado.nombre || c.asignado.email) : '',
+  ];
+}
+
+// ── Detectar duplicados en Contenidos ─────────────────────────────
+// Pedido de Vaneh (18/09): el cliente Lambo quedó con contenidos
+// duplicados, posiblemente de antes de que se arreglara el bug de
+// detección de duplicados en el import (07/09, ver comentario arriba de
+// importClasificarFilas). Agrupa por título normalizado -- mismo criterio
+// que ya usa el import para matchear -- para poder revisar y limpiar los
+// que ya quedaron cargados dos veces.
+function detectarContenidosDuplicados() {
+  const grupos = new Map();
+  STATE.contenidos.forEach(c => {
+    const clave = normImportTexto(c.titulo);
+    if (!clave) return;
+    if (!grupos.has(clave)) grupos.set(clave, []);
+    grupos.get(clave).push(c);
+  });
+  return [...grupos.values()].filter(g => g.length > 1).sort((a, b) => b.length - a.length);
+}
+
+window.abrirDuplicadosContenidoModal = function() {
+  const grupos = detectarContenidosDuplicados();
+  const listaEl = document.getElementById('duplicados-lista');
+  if (!grupos.length) {
+    listaEl.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">No se encontraron títulos repetidos.</p>';
+  } else {
+    listaEl.innerHTML = grupos.map((grupo, gi) => `
+      <div style="border:1px solid var(--border-strong);border-radius:8px;padding:12px;margin-bottom:12px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:8px;">${escapeHtml(grupo[0].titulo)} <span style="color:var(--text-muted);font-weight:400;">(${grupo.length} contenidos con este título)</span></div>
+        ${grupo.map(c => `
+          <label style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:12.5px;cursor:pointer;">
+            <input type="checkbox" class="dup-cont-check" value="${c.id}" data-grupo="${gi}" style="margin-top:2px;">
+            <span style="flex:1;">
+              <strong>Cuenta:</strong> ${escapeHtml(c.cuenta || '—')} ·
+              <strong>Fecha:</strong> ${c.fechaPub ? fmtDate(c.fechaPub) : 'sin fecha'} ·
+              <strong>Estado:</strong> ${escapeHtml(c.estado || '—')} ·
+              <strong>Plataformas:</strong> ${escapeHtml((c.plataformas || []).join(', ') || '—')}
+              ${c.copy ? `<br><span style="color:var(--text-muted);">${escapeHtml(c.copy.slice(0, 120))}${c.copy.length > 120 ? '…' : ''}</span>` : ''}
+            </span>
+            <button type="button" class="btn btn-secondary btn-sm" style="flex-shrink:0;" onclick="event.preventDefault();event.stopPropagation();closeDuplicadosContenidoModal();openContenidoModalById('${c.id}');">Ver</button>
+          </label>`).join('')}
+      </div>`).join('');
+    listaEl.querySelectorAll('.dup-cont-check').forEach(cb => cb.addEventListener('change', actualizarBtnEliminarDuplicados));
+  }
+  actualizarBtnEliminarDuplicados();
+  document.getElementById('duplicadosContenidoModal').classList.remove('hidden');
+};
+
+function actualizarBtnEliminarDuplicados() {
+  const marcados = document.querySelectorAll('.dup-cont-check:checked').length;
+  const btn = document.getElementById('confirmEliminarDuplicadosBtn');
+  btn.disabled = marcados === 0;
+  btn.textContent = marcados ? `Eliminar seleccionados (${marcados})` : 'Eliminar seleccionados';
+}
+
+window.closeDuplicadosContenidoModal = function() {
+  document.getElementById('duplicadosContenidoModal').classList.add('hidden');
+};
+
+window.eliminarDuplicadosSeleccionados = async function() {
+  const ids = [...document.querySelectorAll('.dup-cont-check:checked')].map(cb => cb.value);
+  if (!ids.length) return;
+  if (!confirm(`¿Eliminar ${ids.length} contenido${ids.length !== 1 ? 's' : ''}? No se puede deshacer.`)) return;
+  const btn = document.getElementById('confirmEliminarDuplicadosBtn');
+  btn.disabled = true;
+  btn.textContent = 'Eliminando...';
+  for (const id of ids) {
+    try { await deleteContenido(clientId, id); STATE.contenidos = STATE.contenidos.filter(c => c.id !== id); } catch (e) {}
+  }
+  renderContTab(activeContTab);
+  window.abrirDuplicadosContenidoModal();
+};
+
+async function exportarContenidosExcel() {
+  if (!STATE.contenidos.length) { alert('No hay contenidos cargados todavía para exportar.'); return; }
+  await loadXLSXLib();
+  const aoa = [EXPORT_CONTENIDOS_HEADERS, ...STATE.contenidos.map(contenidoAFilaExport)];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = EXPORT_CONTENIDOS_HEADERS.map((h, i) => ({ wch: [30, 14, 12, 14, 16, 14, 12, 12, 18, 16, 12, 40, 40, 40, 40, 40, 18, 28, 28, 30, 20][i] || 16 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Contenidos');
+  const nombreCliente = (STATE.client?.nombre || STATE.client?.name || clientId || 'cliente').replace(/[^a-z0-9]+/gi, '_');
+  XLSX.writeFile(wb, `Contenidos_${nombreCliente}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+document.getElementById('closeImportModal').addEventListener('click', closeImportModal);
+document.getElementById('closeImportModal2').addEventListener('click', closeImportModal);
+
+// ── Actualización rápida (Estado/Notas/Comentario) por Excel ──────────
+// Pedido de Vaneh (19/09): una forma menos engorrosa que abrir contenido
+// por contenido para poner varios "En revisión" con una nota. A diferencia
+// de "Importar Excel" (exige título+cuenta+plataformas+formato y pisa
+// TODOS los campos de la plantilla), esto matchea solo por título y solo
+// toca las columnas que vengan completas en el archivo -- una celda vacía
+// no borra nada, porque no se arma un objeto nuevo: se edita el contenido
+// real ya cargado.
+let _quickUpdateRows = []; // { titulo, estado, notas, comentario, matches: [contenido,...] }
+
+const QUICK_UPDATE_HEADER_MAP = {
+  'titulo del contenido': 'titulo',
+  titulo: 'titulo',
+  estado: 'estado',
+  'notas internas': 'notas',
+  notas: 'notas',
+  comentario: 'comentario',
+  comentarios: 'comentario',
+  'link pieza terminada': 'linkDrive',
+  'link drive': 'linkDrive',
+  link: 'linkDrive',
+};
+
+window.openQuickUpdateModal = function() {
+  _quickUpdateRows = [];
+  document.getElementById('quick-update-file-input').value = '';
+  document.getElementById('quick-update-status').textContent = '';
+  document.getElementById('quick-update-preview').innerHTML = '';
+  document.getElementById('confirmQuickUpdateBtn').disabled = true;
+  document.getElementById('quickUpdateContenidoModal').classList.remove('hidden');
+  loadXLSXLib();
+};
+
+window.closeQuickUpdateModal = function() {
+  document.getElementById('quickUpdateContenidoModal').classList.add('hidden');
+};
+document.getElementById('closeQuickUpdateModal').addEventListener('click', closeQuickUpdateModal);
+document.getElementById('closeQuickUpdateModal2').addEventListener('click', closeQuickUpdateModal);
+
+document.getElementById('quick-update-file-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById('quick-update-status');
+  const previewEl = document.getElementById('quick-update-preview');
+  const confirmBtn = document.getElementById('confirmQuickUpdateBtn');
+  previewEl.innerHTML = '';
+  confirmBtn.disabled = true;
+  _quickUpdateRows = [];
+  if (!file) return;
+
+  statusEl.textContent = 'Leyendo archivo…';
+  try {
+    await loadXLSXLib();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    if (!raw.length) { statusEl.textContent = 'El archivo no tiene filas.'; return; }
+
+    const headerRow = raw[0].map(normalizeHeader);
+    const fieldByCol = headerRow.map(h => QUICK_UPDATE_HEADER_MAP[h] || null);
+    if (!fieldByCol.includes('titulo')) {
+      statusEl.textContent = 'No encontré una columna "Título del contenido" en la primera fila.';
+      return;
+    }
+
+    const sinMatch = [];
+    for (let r = 1; r < raw.length; r++) {
+      const dataRow = raw[r];
+      if (!dataRow || dataRow.every(v => v === '' || v == null)) continue;
+      const obj = {};
+      fieldByCol.forEach((field, ci) => { if (field) obj[field] = dataRow[ci]; });
+      const titulo = String(obj.titulo || '').trim();
+      if (!titulo) continue;
+      const estado = obj.estado != null ? String(obj.estado).trim() : '';
+      const notas = obj.notas != null ? String(obj.notas).trim() : '';
+      const comentario = obj.comentario != null ? String(obj.comentario).trim() : '';
+      const linkDrive = importSplitMulti(obj.linkDrive);
+      if (!estado && !notas && !comentario && !linkDrive.length) continue; // fila sin nada para actualizar
+      const matches = STATE.contenidos.filter(c => normImportTexto(c.titulo) === normImportTexto(titulo));
+      if (!matches.length) { sinMatch.push(titulo); continue; }
+      _quickUpdateRows.push({ titulo, estado, notas, comentario, linkDrive, matches });
+    }
+
+    renderQuickUpdatePreview(sinMatch);
+    confirmBtn.disabled = !_quickUpdateRows.length;
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'No se pudo leer el archivo. Verificá que sea un .xlsx válido.';
+  }
+});
+
+function renderQuickUpdatePreview(sinMatch) {
+  const statusEl = document.getElementById('quick-update-status');
+  const previewEl = document.getElementById('quick-update-preview');
+  const totalContenidos = _quickUpdateRows.reduce((n, r) => n + r.matches.length, 0);
+  statusEl.textContent = `${_quickUpdateRows.length} fila(s) para aplicar (${totalContenidos} contenido${totalContenidos !== 1 ? 's' : ''})${sinMatch.length ? ` · ${sinMatch.length} sin encontrar` : ''}.`;
+  previewEl.innerHTML = `
+    ${_quickUpdateRows.map(r => `
+      <div style="border:1px solid var(--border-strong);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+        <div style="font-weight:700;font-size:13px;">${escapeHtml(r.titulo)} ${r.matches.length > 1 ? `<span style="color:#b45309;font-weight:400;">(⚠ ${r.matches.length} contenidos con este título, se actualizan todos)</span>` : ''}</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+          ${r.estado ? `<div><strong>Estado →</strong> ${escapeHtml(r.estado)}</div>` : ''}
+          ${r.notas ? `<div><strong>Notas →</strong> ${escapeHtml(r.notas)}</div>` : ''}
+          ${r.linkDrive.length ? `<div><strong>Link pieza terminada →</strong> ${escapeHtml(r.linkDrive.join(', '))}</div>` : ''}
+          ${r.comentario ? `<div><strong>Comentario nuevo →</strong> ${escapeHtml(r.comentario)}</div>` : ''}
+        </div>
+      </div>
+    `).join('')}
+    ${sinMatch.length ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-radius:6px;font-size:12px;color:#991b1b;">No encontré ningún contenido con estos títulos (revisá que coincidan exacto): ${sinMatch.map(t => escapeHtml(t)).join(', ')}</div>` : ''}
+  `;
+}
+
+document.getElementById('confirmQuickUpdateBtn').addEventListener('click', async () => {
+  if (!_quickUpdateRows.length) return;
+  const btn = document.getElementById('confirmQuickUpdateBtn');
+  btn.disabled = true;
+  btn.textContent = 'Actualizando…';
+  const autorNombre = user.name || user.email.split('@')[0];
+  const allMentionUsers = getMentionUsers();
+  const { WORKER_URL } = await import('./firebase.js');
+  const { getSessionToken } = await import('./auth.js');
+  try {
+    for (const r of _quickUpdateRows) {
+      for (const match of r.matches) {
+        const idx = STATE.contenidos.findIndex(c => c.id === match.id);
+        const contenido = idx > -1 ? STATE.contenidos[idx] : match;
+        if (r.estado) contenido.estado = r.estado;
+        if (r.notas) contenido.notas = r.notas;
+        if (r.linkDrive.length) contenido.linkDrive = r.linkDrive;
+        if (r.comentario) {
+          if (!contenido.comentarios) contenido.comentarios = [];
+          contenido.comentarios.push({ autor: autorNombre, email: user.email, fecha: new Date().toLocaleDateString('es-AR'), texto: r.comentario });
+        }
+        const saved = await saveContenido(clientId, contenido, STATE.contenidos);
+        if (idx > -1) STATE.contenidos[idx] = saved;
+        if (r.comentario) {
+          const mencionados = detectarUsuariosMencionados(r.comentario, allMentionUsers);
+          mencionados.forEach(u => {
+            if (u.email && u.email.toLowerCase() !== user.email.toLowerCase()) {
+              fetch(WORKER_URL + '/email/mencion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getSessionToken()}` },
+                body: JSON.stringify({ toEmail: u.email, toName: u.nombre, mencionador: autorNombre, contexto: saved.titulo || '', tipo: 'contenido', itemId: saved.id, clientId }),
+              }).catch(() => {});
+            }
+          });
+        }
+      }
+    }
+    closeQuickUpdateModal();
+    renderContTab(activeContTab);
+    if (currentSection === 'home') renderSection('home');
+    alert('Listo, se actualizaron los contenidos.');
+  } catch (err) {
+    console.error(err);
+    alert('Hubo un error actualizando. Revisá el Banco de contenidos -- algunos contenidos pueden haberse actualizado igual antes del error.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Actualizar';
+  }
+});
+
+document.getElementById('import-file-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById('import-status');
+  const previewEl = document.getElementById('import-preview');
+  const confirmBtn = document.getElementById('confirmImportBtn');
+  previewEl.innerHTML = '';
+  confirmBtn.disabled = true;
+  _importRows = [];
+  if (!file) return;
+
+  statusEl.textContent = 'Leyendo archivo…';
+  try {
+    await loadXLSXLib();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const sheetName = wb.SheetNames.find(n => normalizeHeader(n) === 'contenidos') || wb.SheetNames[0];
+    const sheet = wb.Sheets[sheetName];
+    const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    if (!raw.length) { statusEl.textContent = 'El archivo no tiene filas.'; return; }
+
+    const headerRow = raw[0].map(normalizeHeader);
+    const fieldByCol = headerRow.map(h => IMPORT_HEADER_MAP[h] || null);
+
+    const valid = [];
+    const errores = [];
+    for (let r = 1; r < raw.length; r++) {
+      const dataRow = raw[r];
+      if (!dataRow || dataRow.every(v => v === '' || v == null)) continue; // fila vacía
+      const obj = {};
+      fieldByCol.forEach((field, ci) => {
+        if (field) obj[field] = dataRow[ci];
+      });
+
+      const titulo = String(obj.titulo || '').trim();
+      const cuenta = String(obj.cuenta || '').trim();
+      const plataformas = importSplitMulti(obj.plataformas);
+      const formato = importSplitMulti(obj.formato);
+
+      if (!titulo || !cuenta || !plataformas.length || !formato.length) {
+        errores.push(`Fila ${r + 1}: faltan datos obligatorios (título, cuenta, plataformas o formato).`);
+        continue;
+      }
+
+      const estadoRaw = String(obj.estado || '').trim();
+      const estado = IMPORT_ESTADOS.includes(estadoRaw) ? estadoRaw : 'Idea';
+
+      valid.push({
+        titulo,
+        fechaPub: importParseFecha(obj.fechaPub),
+        estado,
+        cuenta,
+        plataformas,
+        ubicacion: importSplitMulti(obj.ubicacion),
+        formato,
+        dimensiones: importSplitMulti(obj.dimensiones),
+        eje: String(obj.eje || '').trim(),
+        tipo: String(obj.tipo || '').trim(),
+        objetivo: String(obj.objetivo || '').trim(),
+        copy: String(obj.copy || '').trim(),
+        textoPantalla: String(obj.textoPantalla || '').trim(),
+        promptIA: String(obj.promptIA || '').trim(),
+        sugerenciaVisual: String(obj.sugerenciaVisual || '').trim(),
+        guion: String(obj.guion || '').trim(),
+        pauta: importParsePauta(obj.pauta),
+        linkDrive: importSplitMulti(obj.linkDrive),
+        linkDriveRef: importSplitMulti(obj.linkDriveRef),
+        notas: String(obj.notas || '').trim(),
+        comentarios: [],
+        asignado: importResolverAsignado(obj.asignado),
+        asignadoOriginal: obj.asignado ? String(obj.asignado).trim() : '',
+      });
+    }
+
+    // Duplicados DENTRO del mismo archivo (mismo título+cuenta en dos
+    // filas) -- Vaneh reportó (07/09) que no se detectaban. La
+    // clasificación de más abajo solo compara contra lo ya guardado, así
+    // que dos filas nuevas idénticas dentro del mismo Excel pasaban las
+    // dos como "nuevo" sin cruzarse entre sí. Acá se deduplican antes de
+    // clasificar -- se queda la ÚLTIMA fila de cada título+cuenta
+    // repetido (se asume que corrige/reemplaza a la anterior).
+    const vistos = new Map();
+    let duplicadosEnArchivo = 0;
+    valid.forEach(row => {
+      const key = normImportTexto(row.titulo) + '|' + normImportTexto(row.cuenta);
+      if (vistos.has(key)) duplicadosEnArchivo++;
+      vistos.set(key, row);
+    });
+    const validSinDup = [...vistos.values()];
+
+    _importRows = importClasificarFilas(validSinDup);
+    renderImportPreview(errores, duplicadosEnArchivo);
+    confirmBtn.disabled = !importHayAccion();
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'No se pudo leer el archivo. Verificá que sea un .xlsx válido.';
+  }
+});
+
+function importHayAccion() {
+  return _importRows.some(r => r.tipo === 'nuevo' || (r.tipo === 'cambio' && r.accion === 'reemplazar'));
+}
+
+function formatoImportValor(v, esArray, esAsignado) {
+  if (esAsignado) return v ? (v.nombre || v.email) : 'Sin asignar';
+  if (esArray) return (v || []).join(', ');
+  const s = String(v || '');
+  return s.length > 60 ? s.slice(0, 60) + '…' : s;
+}
+
+window.cambiarAccionImport = function(idx, valor) {
+  if (!_importRows[idx]) return;
+  _importRows[idx].accion = valor;
+  document.getElementById('confirmImportBtn').disabled = !importHayAccion();
+};
+
+function renderImportPreview(errores, duplicadosEnArchivo) {
+  const statusEl = document.getElementById('import-status');
+  const previewEl = document.getElementById('import-preview');
+  const nuevos = _importRows.filter(r => r.tipo === 'nuevo');
+  const cambios = _importRows.filter(r => r.tipo === 'cambio');
+  const iguales = _importRows.filter(r => r.tipo === 'igual');
+  // La columna Asignado traía un nombre/email que no coincide con nadie
+  // del equipo del cliente -- se importa igual pero sin asignar, así que
+  // avisamos para que lo revise (typo, o la persona todavía no está
+  // agregada como colaboradora/usuaria de este cliente).
+  const sinAsignar = _importRows.filter(r => r.row.asignadoOriginal && !r.row.asignado);
+  statusEl.textContent = `${nuevos.length} nuevo(s) · ${cambios.length} ya existen con cambios · ${iguales.length} sin cambios${duplicadosEnArchivo ? ` · ${duplicadosEnArchivo} duplicado(s) dentro del mismo archivo (se usó la última fila de cada uno)` : ''}${errores.length ? ` · ${errores.length} fila(s) con error` : ''}.`;
+
+  const filaHtml = (c) => `<tr><td>${c.fechaPub || '—'}</td><td>${c.titulo}</td><td>${c.plataformas.join(', ')}</td><td>${c.estado}</td><td>${c.cuenta}</td></tr>`;
+
+  previewEl.innerHTML = `
+    ${nuevos.length ? `
+      <div style="font-size:12px;font-weight:700;color:#166534;margin:10px 0 6px;">🆕 Nuevos (${nuevos.length})</div>
+      <div class="table-wrapper table-scroll-wrap"><table class="data-table">
+        <thead><tr><th>Fecha</th><th>Título</th><th>Plataformas</th><th>Estado</th><th>Cuenta</th></tr></thead>
+        <tbody>${nuevos.map(r => filaHtml(r.row)).join('')}</tbody>
+      </table></div>
+    ` : ''}
+    ${cambios.length ? `
+      <div style="font-size:12px;font-weight:700;color:#b45309;margin:14px 0 6px;">🔄 Ya existen (mismo título + cuenta) pero cambiaron (${cambios.length})</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${cambios.map(r => `
+          <div style="border:1px solid #fde68a;background:#fffbeb;border-radius:8px;padding:10px 12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+              <div style="font-size:13px;font-weight:600;">${r.row.titulo}</div>
+              <select onchange="cambiarAccionImport(${_importRows.indexOf(r)}, this.value)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border-strong);">
+                <option value="reemplazar" ${r.accion === 'reemplazar' ? 'selected' : ''}>Reemplazar</option>
+                <option value="omitir" ${r.accion === 'omitir' ? 'selected' : ''}>Omitir (dejar como está)</option>
+              </select>
+            </div>
+            <div style="font-size:11px;color:#92400e;margin-top:6px;line-height:1.6;">
+              ${r.cambios.map(f => `<div><strong>${f.label}:</strong> ${formatoImportValor(r.match[f.key], f.arr, f.esAsignado) || '—'} → ${formatoImportValor(r.row[f.key], f.arr, f.esAsignado) || '—'}</div>`).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+    ${iguales.length ? `<div style="font-size:12px;color:var(--text-muted);margin-top:14px;">✅ ${iguales.length} ya estaban cargados igual, no hace falta tocarlos.</div>` : ''}
+    ${sinAsignar.length ? `<div style="margin-top:10px;padding:10px 12px;background:#fffbeb;border-radius:6px;font-size:12px;color:#92400e;">⚠️ No reconocí a quién asignar en ${sinAsignar.length} fila(s) (se importan igual, sin asignar): ${sinAsignar.map(r => `"${escapeHtml(r.row.asignadoOriginal)}"`).join(', ')}. Revisá que el nombre o email coincida con el contacto del cliente o alguien del equipo agregado a este cliente.</div>` : ''}
+    ${errores.length ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-radius:6px;font-size:12px;color:#991b1b;">${errores.join('<br>')}</div>` : ''}
+  `;
+}
+
+// Pedido de Vaneh (07/09): poder deshacer una importación con un botón.
+// Guarda lo mínimo para revertir: los ids que se crearon (para borrarlos)
+// y el valor ANTERIOR de los campos que se pisaron en actualizaciones
+// (para restaurarlos, "asignado" incluido) -- no toca comentarios ni
+// imágenes porque el import tampoco los toca.
+let _ultimoImportUndo = null;
+
+function mostrarBannerDeshacerImport(resumen) {
+  document.getElementById('import-undo-banner')?.remove();
+  const b = document.createElement('div');
+  b.id = 'import-undo-banner';
+  b.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0D2B6B;color:#fff;padding:12px 18px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:9999;display:flex;align-items:center;gap:14px;font-size:13px;max-width:90vw;flex-wrap:wrap;';
+  b.innerHTML = `
+    <span>✅ ${resumen}</span>
+    <button onclick="deshacerUltimaImportacion()" style="background:#fff;color:#0D2B6B;border:none;padding:6px 12px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;">↩️ Deshacer</button>
+    <button onclick="document.getElementById('import-undo-banner').remove()" style="background:transparent;color:#fff;border:none;font-size:16px;cursor:pointer;opacity:.7;">×</button>
+  `;
+  document.body.appendChild(b);
+  setTimeout(() => { if (document.getElementById('import-undo-banner') === b) b.remove(); }, 60000);
+}
+
+window.deshacerUltimaImportacion = async function() {
+  if (!_ultimoImportUndo) return;
+  if (!confirm('¿Deshacer la última importación? Se van a borrar los contenidos nuevos que trajo y se van a restaurar los que actualizó a como estaban antes.')) return;
+  const { nuevosIds, actualizacionesPrevias } = _ultimoImportUndo;
+  const banner = document.getElementById('import-undo-banner');
+  try {
+    for (const id of nuevosIds) {
+      await deleteContenido(clientId, id, STATE.contenidos);
+      STATE.contenidos = STATE.contenidos.filter(c => c.id !== id);
+    }
+    if (actualizacionesPrevias.length) {
+      const restaurados = await updateContenidosBulk(clientId, actualizacionesPrevias);
+      restaurados.forEach(c => {
+        const i = STATE.contenidos.findIndex(x => x.id === c.id);
+        if (i > -1) STATE.contenidos[i] = c;
+      });
+    }
+    _ultimoImportUndo = null;
+    banner?.remove();
+    renderContTab(activeContTab);
+    if (currentSection === 'home') renderSection('home');
+  } catch (err) {
+    console.error(err);
+    alert('No se pudo deshacer del todo. Revisá el Banco de contenidos y avisame si quedó algo mal.');
+  }
+};
+
+document.getElementById('confirmImportBtn').addEventListener('click', async () => {
+  const nuevos = _importRows.filter(r => r.tipo === 'nuevo').map(r => r.row);
+  const aActualizar = _importRows.filter(r => r.tipo === 'cambio' && r.accion === 'reemplazar');
+  if (!nuevos.length && !aActualizar.length) return;
+  const btn = document.getElementById('confirmImportBtn');
+  btn.disabled = true; btn.textContent = 'Importando…';
+  try {
+    const actualizacionesPrevias = aActualizar.map(r => {
+      const prev = { id: r.match.id };
+      IMPORT_DIFF_FIELDS.forEach(f => { prev[f.key] = r.match[f.key]; });
+      return prev;
+    });
+    let nuevosIds = [];
+    if (nuevos.length) {
+      const saved = await saveContenidosBulk(clientId, nuevos);
+      STATE.contenidos.push(...saved);
+      nuevosIds = saved.map(s => s.id);
+    }
+    if (aActualizar.length) {
+      // Solo se pisan los campos que vienen del Excel (IMPORT_DIFF_FIELDS,
+      // que desde el pedido de Vaneh del 21/09 incluye "asignado") --
+      // comentarios/imágenes del contenido existente quedan intactos, no
+      // son parte de la plantilla.
+      const actualizaciones = aActualizar.map(r => {
+        const u = { id: r.match.id };
+        IMPORT_DIFF_FIELDS.forEach(f => { u[f.key] = r.row[f.key]; });
+        return u;
+      });
+      const actualizados = await updateContenidosBulk(clientId, actualizaciones);
+      actualizados.forEach(c => {
+        const i = STATE.contenidos.findIndex(x => x.id === c.id);
+        if (i > -1) STATE.contenidos[i] = c;
+      });
+    }
+    _ultimoImportUndo = { nuevosIds, actualizacionesPrevias };
+    closeImportModal();
+    renderContTab(activeContTab);
+    if (currentSection === 'home') renderSection('home');
+    mostrarBannerDeshacerImport(`Importados: ${nuevosIds.length} nuevo(s), ${actualizacionesPrevias.length} actualizado(s).`);
+  } catch (err) {
+    console.error(err);
+    alert('Hubo un error al importar. Probá de nuevo.');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Importar';
+  }
+});
+
+window.toggleTareaVisibleCliente = async function(id) {
+  if (user.role === 'client') return; // el cliente no puede tocar esto
+  const t = STATE.tareas.find(x => x.id === id);
+  if (!t) return;
+  t.visibleParaCliente = t.visibleParaCliente === true ? false : true;
+  const saved = await saveTarea(clientId, t);
+  const i = STATE.tareas.findIndex(x => x.id === id);
+  STATE.tareas[i] = saved;
+  refreshTareasView();
+  if (currentSection === 'home') renderSection('home');
+};
+
+// Mismo criterio que siguienteFechaRecurrencia en cosmart-workers (ver
+// reactivarTareasRecurrente ahí) -- calcula la fecha del próximo ciclo a
+// partir de una fecha ancla, sin importar si esa fecha ya pasó o no.
+function siguienteFechaRecurrencia(fechaStr, recurrencia, diasSemana) {
+  const base = new Date((fechaStr || new Date().toISOString().split('T')[0]) + 'T00:00:00');
+  const d = new Date(base);
+  if (recurrencia === 'diaria') { d.setDate(d.getDate() + 1); return d; }
+  if (recurrencia === 'semanal') { d.setDate(d.getDate() + 7); return d; }
+  if (recurrencia === 'quincenal') { d.setDate(d.getDate() + 15); return d; }
+  if (recurrencia === 'mensual') { d.setMonth(d.getMonth() + 1); return d; }
+  if (recurrencia === 'anual') { d.setFullYear(d.getFullYear() + 1); return d; }
+  if (recurrencia === 'dias-semana') {
+    const dias = (diasSemana || []).map(Number);
+    if (!dias.length) return null;
+    for (let i = 1; i <= 7; i++) {
+      const cand = new Date(base);
+      cand.setDate(cand.getDate() + i);
+      if (dias.includes(cand.getDay())) return cand;
+    }
+    return null;
+  }
+  return null;
+}
+
+// Pedido de Vaneh (07/09): si una tarea con recurrencia se marca "Lista",
+// tiene que volver a generarse SOLA en "Sin empezar" con el próximo
+// vencimiento (la semana que viene si es semanal, el mismo día del mes
+// que viene si es mensual, etc.) -- de una, no hay que esperar a que esa
+// fecha futura llegue ni a que corra el cron. El cron diario
+// (reactivarTareasRecurrentes en cosmart-workers) sigue como red de
+// seguridad para lo que se complete fuera de la app (ej. Claude IA).
+// Al completar una recurrente, la tarea que se acaba de terminar queda
+// como un registro normal y permanente en "Lista" -- pedido de Vaneh
+// (10/09): "la tarea anterior también tiene que quedar como lista...
+// la tengo que poder ver ahí en listos". Antes esta función mutaba esa
+// misma tarea para convertirla en el próximo ciclo, y la que se acababa
+// de completar desaparecía de la vista al toque (mismo error que ya se
+// había solucionado antes con historialCompletados, pero eso solo
+// resolvía los reportes, no que se viera la tarjeta). Ahora se le saca
+// la recurrencia a la vieja (para que nada la vuelva a tratar como "la
+// fuente viva" de la serie) y se arma una tarea NUEVA aparte para el
+// próximo ciclo, que se agrega a `list` -- el caller la persiste junto
+// con la vieja en el mismo guardado. Devuelve la nueva tarea, o null si
+// no hay nada que generar ("días específicos" sin ningún día tildado).
+function regenerarSiRecurrente(t, list) {
+  if (!t.recurrencia) return null;
+  const anchor = t.vencimiento || t.completadoEn || new Date().toISOString().split('T')[0];
+  const siguiente = siguienteFechaRecurrencia(anchor, t.recurrencia, t.diasSemana);
+  if (!siguiente) return null; // "días específicos" sin ningún día tildado -- no hay a dónde avanzar
+  const recurrencia = t.recurrencia;
+  const diasSemana = t.diasSemana;
+  t.recurrencia = null;
+  t.diasSemana = [];
+  const numero = Math.max(0, ...list.map(x => x.numero || 0)) + 1;
+  const nuevo = {
+    ...t,
+    id: 't' + Date.now() + Math.random().toString(36).slice(2, 6),
+    numero,
+    recurrencia,
+    diasSemana,
+    estado: 'Sin empezar',
+    completadoEn: null,
+    visibleParaCliente: false,
+    vencimiento: siguiente.toISOString().split('T')[0],
+    comentarios: [],
+    historialCompletados: undefined,
+    // Historial de cambios (27/09): el ciclo nuevo arranca su propia
+    // hoja en blanco -- restringidaA/creadoPor SÍ se heredan (misma regla
+    // de permisos y mismo creador de la serie recurrente).
+    historialCambios: [],
+    subtareas: (t.subtareas || []).map(s => ({ ...s, done: false, completadoEn: null, historialCompletados: undefined })),
+  };
+  list.push(nuevo);
+  return nuevo;
+}
+
+window.toggleTareaListo = async function(id) {
+  const t = STATE.tareas.find(x => x.id === id);
+  if (!t) return;
+  t.estado = t.estado === 'Listo' ? 'Sin empezar' : 'Listo';
+  if (t.estado === 'Listo') { t.visibleParaCliente = true; t.completadoEn = new Date().toISOString().split('T')[0]; regenerarSiRecurrente(t, STATE.tareas); } // al terminarla, el cliente la puede ver
+  else t.completadoEn = null;
+  const saved = await saveTarea(clientId, t, STATE.tareas);
+  const i = STATE.tareas.findIndex(x => x.id === id);
+  STATE.tareas[i] = saved;
+  updateBadges();
+  refreshTareasView();
+  if (currentSection === 'home') renderSection('home');
+};
+
+// ──────────────────────────────────────────────────────
+// TAREAS
+// ──────────────────────────────────────────────────────
+function refreshTareasView() {
+  const el = document.getElementById('main-content');
+  if (!el) return;
+  // Pedido de Vaneh (28/09): al crear/marcar una tarea, la vista volvía
+  // siempre al principio -- porque `el` (`.content`, el contenedor que
+  // scrollea) es justo el que se reescribe con `innerHTML`, y reemplazar
+  // el contenido de un elemento resetea su propio scroll a 0. Se guarda
+  // la posición antes y se restaura después de repintar (el
+  // requestAnimationFrame espera a que el navegador termine el reflow
+  // con el contenido nuevo, si no la restauración no tiene efecto).
+  const scrollPos = el.scrollTop;
+  if (_tareasView === 'calendario') renderTareasCalendario(el);
+  else renderTareas(el);
+  requestAnimationFrame(() => { el.scrollTop = scrollPos; });
+}
+
+function renderTareas(container) {
+  const cols = [
+    { key: 'Sin empezar', label: 'Sin empezar', color: '#94a3b8' },
+    { key: 'En progreso', label: 'En progreso', color: '#3b82f6' },
+    { key: 'Listo', label: 'Listo', color: '#10b981' },
+  ];
+  let tareasBase = tareasVisibles(STATE.tareas);
+  // Permisos por tarea (27/09): restringidaA es una regla del EQUIPO, no
+  // del cliente -- un cliente real ya filtró por visibleParaCliente arriba,
+  // así que no vuelve a filtrar acá (evita ocultarle al cliente algo que
+  // sí debería ver por error de configuración de restringidaA).
+  if (user.role !== 'client') tareasBase = tareasBase.filter(t => puedeVerTarea(t, user));
+  if (_tareasBusqueda) tareasBase = tareasBase.filter(t => (t.titulo || '').toLowerCase().includes(_tareasBusqueda));
+  if (_tareasFiltroAsignado) tareasBase = tareasBase.filter(t =>
+    _tareasFiltroAsignado === '_sin_asignar' ? !t.asignado?.email : t.asignado?.email === _tareasFiltroAsignado);
+  if (_tareasFiltroPrioridad) tareasBase = tareasBase.filter(t => t.prioridad === _tareasFiltroPrioridad);
+  if (_tareasFiltroFecha) tareasBase = tareasBase.filter(t => fechaEnRangoFiltro(t.vencimiento || '', _tareasFiltroFecha));
+  const archivadas = tareasBase.filter(t => t.archivado);
+
+  const PRIO_ORDEN_TAREAS = { Alta: 0, Media: 1, Baja: 2 };
+  const ordenarTareas = (lista) => [...lista].sort((a, b) => {
+    if (_tareasOrden === 'prioridad') {
+      const diff = (PRIO_ORDEN_TAREAS[a.prioridad] ?? 3) - (PRIO_ORDEN_TAREAS[b.prioridad] ?? 3);
+      if (diff !== 0) return diff;
+    }
+    const aFecha = (a.vencimiento || '9999') + 'T' + (a.hora || '00:00');
+    const bFecha = (b.vencimiento || '9999') + 'T' + (b.hora || '00:00');
+    return aFecha > bFecha ? 1 : -1;
+  });
+
+  container.innerHTML = `<div class="kanban-board" id="kanban-tareas">${cols.map(col => {
+    const items = ordenarTareas(tareasBase.filter(t => t.estado === col.key && !t.archivado));
+    return `
+      <div class="kanban-col" data-col="${col.key}" style="flex:1;max-width:none;">
+        <div class="kanban-col-header">
+          <span class="kanban-col-dot" style="background:${col.color};"></span>
+          <span class="col-title">${col.label}</span>
+          <span class="col-count">${items.length}</span>
+        </div>
+        <div class="kanban-cards" data-col="${col.key}">
+          ${items.map(t => {
+            const esProy = !!t.esProyecto;
+            const muted = esProy ? 'rgba(255,255,255,.75)' : 'var(--text-muted)';
+            const vencido = t.vencimiento && new Date(t.vencimiento+'T00:00:00') < new Date() && t.estado !== 'Listo';
+            const vencColor = vencido ? (esProy ? '#fecdd3' : '#dc2626') : muted;
+            return `
+            <div class="kanban-card" draggable="true" data-id="${t.id}" onclick="if(!this._dragged)openTareaModal('${t.id}')" ondragstart="this._dragged=true" ondragend="setTimeout(()=>{this._dragged=false},200)" style="${esProy ? 'background:var(--primary-dark);border-color:var(--primary-dark);' : (t.recurrencia ? 'background:#c3b1d1;border-color:#af9dbd;' : '')}">
+              <div style="display:flex;align-items:flex-start;gap:8px;">
+                <button onclick="event.stopPropagation();toggleTareaListo('${t.id}')" title="${t.estado === 'Listo' ? 'Marcar como no hecha' : 'Marcar como hecha'}" style="flex-shrink:0;margin-top:2px;width:18px;height:18px;border-radius:50%;border:2px solid ${t.estado === 'Listo' ? '#10b981' : '#cbd5e1'};background:${t.estado === 'Listo' ? '#10b981' : 'transparent'};color:#fff;font-size:11px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;">${t.estado === 'Listo' ? '✓' : ''}</button>
+                <div class="kanban-card-title" style="${t.estado === 'Listo' ? `text-decoration:line-through;color:${muted};` : (esProy ? 'color:#fff;' : '')}">${esProy ? '🔷 ' : ''}${t.numero ? `<span style="color:${muted};font-weight:400;">#${codigoTarea(t)}</span> ` : ''}${t.titulo}</div>
+              </div>
+              ${t.prioridad || t.cuadrante ? `<div style="margin-top:4px;">${t.prioridad ? `<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:${t.prioridad==='Alta'?'#fee2e2':t.prioridad==='Media'?'#fff7ed':'#f1f5f9'};color:${t.prioridad==='Alta'?'#dc2626':t.prioridad==='Media'?'#b45309':'#64748b'};font-weight:700;">${t.prioridad}</span>` : ''} ${cuadranteBadge(t.cuadrante)}</div>` : ''}
+              ${t.vencimiento ? `<div style="font-size:11px;margin-top:4px;color:${vencColor};">📅 Vence: ${fmtDate(t.vencimiento)}${t.hora ? ` · ${t.hora}` : ''}</div>` : ''}
+              ${t.notas ? `<div class="kanban-card-notas" style="font-size:11px;color:${muted};margin-top:4px;">${t.notas}</div>` : ''}
+              ${t.recurrencia ? `<div style="font-size:10px;margin-top:4px;"><span style="padding:2px 7px;background:#fef9c3;color:#a16207;border-radius:10px;font-weight:600;">↻ ${t.recurrencia}</span></div>` : ''}
+              ${(t.url || t.linkRef) ? `<a href="${t.url || t.linkRef}" target="_blank" onclick="event.stopPropagation();" style="font-size:10px;color:${esProy ? '#93c5fd' : 'var(--accent)'};display:block;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;">🔗 ${t.url || t.linkRef}</a>` : ''}
+              ${t.subtareas?.length ? (() => {
+                const done = t.subtareas.filter(s=>s.done).length;
+                const total = t.subtareas.length;
+                const pct = Math.round(done/total*100);
+                return `<div style="margin-top:6px;">
+                  <div style="display:flex;justify-content:space-between;font-size:10px;color:${muted};margin-bottom:3px;"><span>${done}/${total} subtareas</span><span>${pct}%</span></div>
+                  <div style="height:3px;background:${esProy ? 'rgba(255,255,255,.25)' : '#e2e8f0'};border-radius:2px;"><div style="height:3px;background:${esProy ? '#60a5fa' : '#10b981'};border-radius:2px;width:${pct}%;"></div></div>
+                </div>`;
+              })() : ''}
+              <div style="display:flex;gap:4px;margin-top:8px;">
+                <button class="btn btn-secondary btn-sm" onclick="openTareaModal('${t.id}')">Editar</button>
+                ${user.role !== 'client' ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();toggleTareaVisibleCliente('${t.id}')" title="${t.visibleParaCliente === true ? 'Visible para el cliente — click para ocultarla (tarea interna)' : 'Tarea interna — el cliente no la ve. Click para mostrársela.'}">${t.visibleParaCliente === true ? '👁' : '🔒'}</button>` : ''}
+                <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();eliminarTareaDirecta('${t.id}')" title="Eliminar">×</button>
+              </div>
+            </div>
+          `;}).join('')}
+        </div>
+        <button class="kanban-add-btn" onclick="openTareaModal(null,'${col.key}')">+ Agregar</button>
+      </div>
+    `;
+  }).join('')}</div>
+  ${archivadas.length ? `
+    <div style="margin-top:24px;">
+      <button class="btn btn-secondary btn-sm" onclick="this.nextElementSibling.classList.toggle('hidden');this.textContent=this.textContent.includes('Ver')?'▲ Ocultar archivadas':'▼ Ver archivadas (${archivadas.length})'">▼ Ver archivadas (${archivadas.length})</button>
+      <div class="hidden" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
+        ${archivadas.map(t => `
+          <div class="card" style="padding:10px 14px;opacity:0.7;min-width:200px;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px;">📦 ${t.titulo}</div>
+            <div style="display:flex;gap:4px;margin-top:6px;">
+              <button class="btn btn-secondary btn-sm" onclick="desarchivarTarea('${t.id}')">Restaurar</button>
+              <button class="btn btn-danger btn-sm" onclick="eliminarTareaDirecta('${t.id}')">🗑</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  ` : ''}`;
+
+  initKanbanDrag('#kanban-tareas', STATE.tareas.filter(t => !t.archivado), async (id, newCol) => {
+    const t = STATE.tareas.find(x => x.id === id);
+    if (!t || t.estado === newCol) return;
+    t.estado = newCol;
+    if (newCol === 'Listo') { t.visibleParaCliente = true; t.completadoEn = new Date().toISOString().split('T')[0]; regenerarSiRecurrente(t, STATE.tareas); }
+    else t.completadoEn = null;
+    updateBadges();
+    refreshTareasView();
+    saveTarea(clientId, t, STATE.tareas).catch(() => {});
+  });
+}
+
+function renderTareasCalendario(container) {
+  const hoy = new Date();
+  let viewYear = hoy.getFullYear(), viewMonth = hoy.getMonth();
+  let tareasBase = tareasVisibles(STATE.tareas).filter(t => !t.archivado);
+  if (user.role !== 'client') tareasBase = tareasBase.filter(t => puedeVerTarea(t, user));
+  if (_tareasBusqueda) tareasBase = tareasBase.filter(t => (t.titulo || '').toLowerCase().includes(_tareasBusqueda));
+  if (_tareasFiltroAsignado) tareasBase = tareasBase.filter(t =>
+    _tareasFiltroAsignado === '_sin_asignar' ? !t.asignado?.email : t.asignado?.email === _tareasFiltroAsignado);
+  if (_tareasFiltroPrioridad) tareasBase = tareasBase.filter(t => t.prioridad === _tareasFiltroPrioridad);
+  if (_tareasFiltroFecha) tareasBase = tareasBase.filter(t => fechaEnRangoFiltro(t.vencimiento || '', _tareasFiltroFecha));
+
+  function drawCal() {
+    const monthName = new Date(viewYear, viewMonth, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+    const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const daysInPrev = new Date(viewYear, viewMonth, 0).getDate();
+
+    let cells = '';
+    let day = 1;
+    let nextDay = 1;
+    const totalCells = Math.ceil((firstDay + daysInMonth) / 7) * 7;
+
+    for (let i = 0; i < totalCells; i++) {
+      let cellDate, isOther = false;
+      if (i < firstDay) { cellDate = new Date(viewYear, viewMonth - 1, daysInPrev - firstDay + i + 1); isOther = true; }
+      else if (day > daysInMonth) { cellDate = new Date(viewYear, viewMonth + 1, nextDay++); isOther = true; }
+      else { cellDate = new Date(viewYear, viewMonth, day++); }
+
+      const dateStr = cellDate.toISOString().split('T')[0];
+      const isToday = dateStr === hoy.toISOString().split('T')[0];
+      const dayProyectos = tareasBase.filter(t => t.esProyecto && t.fechaInicio && t.vencimiento && dateStr >= t.fechaInicio && dateStr <= t.vencimiento);
+      const dayTareas = tareasBase.filter(t => !t.esProyecto && t.vencimiento === dateStr);
+
+      cells += `<div class="cal-day${isOther ? ' other-month' : ''}${isToday ? ' today' : ''}">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div class="cal-day-num">${cellDate.getDate()}</div>
+          ${!isOther ? `<button onclick="openTareaModal(null)" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:16px;line-height:1;padding:0 4px;border-radius:3px;" title="Nueva tarea" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='#cbd5e1'">+</button>` : ''}
+        </div>
+        ${dayProyectos.map(t => `
+          <div class="cal-event" style="background:var(--primary-dark);color:#fff;font-weight:600;${t.estado === 'Listo' ? 'text-decoration:line-through;opacity:.6;' : ''}"
+               onclick="openTareaModal('${t.id}')" title="${t.titulo}">
+            🔷 ${t.numero ? `#${codigoTarea(t)} ` : ''}${t.titulo}
+          </div>
+        `).join('')}
+        ${dayTareas.map(t => `
+          <div class="cal-event" style="background:#3b82f622;color:#3b82f6;${t.estado === 'Listo' ? 'text-decoration:line-through;opacity:.6;' : ''}"
+               onclick="openTareaModal('${t.id}')" title="${t.titulo}">
+            ✅ ${t.numero ? `#${codigoTarea(t)} ` : ''}${t.titulo}
+          </div>
+        `).join('')}
+      </div>`;
+    }
+
+    container.innerHTML = `
+      <div class="card">
+        <div class="card-body">
+          <div class="cal-nav">
+            <button class="cal-btn" id="cal-tareas-prev">‹</button>
+            <div class="cal-month">${monthName.charAt(0).toUpperCase()+monthName.slice(1)}</div>
+            <button class="cal-btn" id="cal-tareas-next">›</button>
+          </div>
+          <div class="cal-grid">
+            ${['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'].map(d => `<div class="cal-day-header">${d}</div>`).join('')}
+            ${cells}
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('cal-tareas-prev').onclick = () => { if (--viewMonth < 0) { viewMonth=11; viewYear--; } drawCal(); };
+    document.getElementById('cal-tareas-next').onclick = () => { if (++viewMonth > 11) { viewMonth=0; viewYear++; } drawCal(); };
+  }
+  drawCal();
+}
+
+// ── Rich Text Editor helpers ──
+let _tareaImgList = [];
+let _tareaSubtareasPendientes = [];
+let _tareaArchivosPendientes = []; // ids de STATE.home.archivos adjuntados a esta tarea
+
+window.rteCmd = function(cmd) {
+  if (/^h[1-3]$/.test(cmd)) {
+    document.getElementById('tf-notas').focus();
+    document.execCommand('formatBlock', false, cmd);
+    return;
+  }
+  document.getElementById('tf-notas').focus();
+  document.execCommand(cmd, false, null);
+};
+
+window.rteColor = function(color) {
+  document.getElementById('tf-notas').focus();
+  document.execCommand('foreColor', false, color);
+};
+
+// Las imagenes de una tarea se suben a R2 al toque (como ya hacia
+// "Archivos adjuntos"), no se embeben como base64 dentro de la tarea.
+// Antes cada imagen quedaba pegada entera (base64, ~33% mas pesada) adentro
+// del JSON de TODAS las tareas del cliente -- eso hacia que guardar la
+// tarea mandara un POST enorme que podia tardar, fallar en silencio o
+// directamente no completarse nunca ("al guardar no pasa nada, quedan
+// ahi" -- reporte de Vaneh, 19/09). Ahora la tarea solo guarda la
+// referencia (key) al archivo ya subido, igual que "Archivos adjuntos".
+// Tareas viejas guardadas con imagenes en base64 se siguen mostrando bien
+// (quedan como estan, no se migran).
+const _imgBlobUrlCache = new Map();
+
+// Antes las miniaturas (72x72) quedaban adentro de la zona de pegado --
+// ocupaban lugar justo donde hay que hacer click/Ctrl+V para agregar la
+// siguiente, y cada vez achicaban más ese espacio. Pedido de Vaneh
+// (19/09): que queden arriba, como una fila compacta con el nombre
+// (igual que "Archivos adjuntos" debajo), dejando la zona de pegado
+// siempre libre.
+function renderTareaImgThumbs() {
+  const container = document.getElementById('tarea-img-thumbs');
+  if (!container) return;
+  container.innerHTML = _tareaImgList.map((item, i) => {
+    if (item.subiendo) {
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f8fafc;border:1px solid var(--border);border-radius:6px;font-size:12.5px;color:var(--text-muted);"><i data-lucide="loader" style="width:14px;height:14px;flex-shrink:0;"></i>Subiendo…</div>`;
+    }
+    const nombre = item.filename || `Imagen ${i + 1}`;
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f8fafc;border:1px solid var(--border);border-radius:6px;">
+      <i data-lucide="image" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;stroke-width:1.75;"></i>
+      <span class="tarea-img-thumb" data-idx="${i}" style="flex:1;font-size:12.5px;cursor:pointer;color:var(--primary);text-decoration:underline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(nombre)}</span>
+      <button type="button" data-idx="${i}" class="tarea-img-remove" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:15px;padding:0 2px;flex-shrink:0;" title="Quitar">×</button>
+    </div>`;
+  }).join('');
+  setTimeout(refreshIcons, 30);
+  // Miniaturas subidas a R2 necesitan el blob (el endpoint pide auth, no
+  // se puede apuntar un <img> directo ahi) -- se cargan aparte y se
+  // pisa el src cuando estan listas.
+  _tareaImgList.forEach(async (item, i) => {
+    if (item.subiendo || item.src || !item.key) return;
+    try {
+      item.src = _imgBlobUrlCache.get(item.key) || await getArchivoBlobUrl(clientId, item.key);
+      _imgBlobUrlCache.set(item.key, item.src);
+      renderTareaImgThumbs();
+    } catch (e) {}
+  });
+}
+
+// Click para ampliar / eliminar -- con un listener delegado (fijo, una
+// sola vez) en vez de meter la imagen entera adentro de un atributo
+// onclick="...", que con un base64 largo (imágenes viejas) podía fallar
+// según el navegador y quedaba "sin hacer nada" al tocarla. Pedido de
+// Vaneh (19/09): "la toco y no pasa nada y quedó ahí".
+document.getElementById('tarea-img-thumbs')?.addEventListener('click', (e) => {
+  const removeBtn = e.target.closest('.tarea-img-remove');
+  if (removeBtn) { removeTareaImg(Number(removeBtn.dataset.idx)); return; }
+  const thumb = e.target.closest('.tarea-img-thumb');
+  if (thumb) {
+    const item = _tareaImgList[Number(thumb.dataset.idx)];
+    if (item?.src) ampliarImagen(item.src);
+  }
+});
+
+// Lightbox simple: pedido de Vaneh -- "necesito tocar la imagen y que se
+// amplie asi se entiende si se cargo o no".
+window.ampliarImagen = function(src) {
+  if (!src) return;
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:24px;';
+  overlay.innerHTML = `<img src="${src}" style="max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.5);">`;
+  overlay.onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+};
+
+// ── Teleprompter (guion de Contenidos, pedido de Vaneh para grabar) ──
+// Lee el textarea del guion EN VIVO (no hace falta guardar el contenido
+// primero) y lo muestra a pantalla completa, fondo negro/letras blancas,
+// con auto-scroll a velocidad ajustable -- así se puede leer mientras se
+// graba sin tocar el teclado.
+let _tpScrollTimer = null;
+let _tpFontSize = 42;
+let _tpSpeed = 80; // en décimas de nivel: 80 = nivel 8,0 (se muestra con un decimal)
+const TP_PX_POR_NIVEL = 0.03; // px por tick de 30ms por cada décima de nivel (nivel 1 = 0,3 px)
+
+// Función base: cualquier lugar que tenga un texto de guion en memoria
+// (el textarea del contenido, o un guion de STATE.guiones) puede abrir
+// el teleprompter con él, sin pasar por el DOM del contenido.
+function abrirTeleprompterConTexto(texto) {
+  texto = (texto || '').trim();
+  if (!texto) { alert('Ese guion todavía no tiene texto.'); return; }
+  const txtEl = document.getElementById('tp-text');
+  txtEl.textContent = texto;
+  _tpFontSize = 42;
+  txtEl.style.fontSize = _tpFontSize + 'px';
+  document.getElementById('tp-scroll').scrollTop = 0;
+  document.getElementById('tp-mirror').checked = false;
+  txtEl.style.transform = '';
+  teleprompterSetPlaying(false);
+  document.getElementById('teleprompterModal').classList.remove('hidden');
+  tpRefrescarPresets(true); // vuelve a aplicar el último ajuste guardado que se usó
+}
+
+// Entrada desde el modal de Contenido: lee el textarea en vivo.
+window.abrirTeleprompter = function() {
+  const texto = (document.getElementById('cf-guion').value || '').trim();
+  if (!texto) { alert('Escribí el guion primero (arriba, en el campo "Guion").'); return; }
+  abrirTeleprompterConTexto(texto);
+};
+
+// Entrada desde el repositorio de Guiones: por id, sin pasar el texto
+// por ningún atributo HTML (strings largos en onclick fallan en
+// silencio -- ver el bug real de la lightbox de imágenes).
+window.abrirTeleprompterGuion = function(id) {
+  const g = STATE.guiones.find(x => x.id === id);
+  if (g) abrirTeleprompterConTexto(g.texto);
+};
+
+window.cerrarTeleprompter = function() {
+  teleprompterSetPlaying(false);
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+  }
+  if (_tpPipWin) { try { _tpPipWin.close(); } catch (e) {} _tpPipWin = null; }
+  if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+  document.getElementById('teleprompterModal').classList.add('hidden');
+};
+
+// Pedido de Vaneh (27/09): "tiene que poder expandirse a toda la pantalla
+// de la computadora" -- el modal ya ocupaba todo el VIEWPORT del navegador
+// (position:fixed;inset:0), pero seguía compartiendo pantalla con la barra
+// de pestañas/dirección. Fullscreen API real sobre el propio modal, así al
+// grabar queda de borde a borde del monitor sin salir del Hub.
+// OJO si se retoca esto -- el botón "no hacía nada" en "Contenidos propios"
+// (admin) porque ese panel corre adentro de un <iframe> (ver
+// #contenidos-propios-iframe en admin/index.html) y sin el permiso
+// `allow="fullscreen"` en el iframe, el navegador rechaza el pedido de
+// pantalla completa EN SILENCIO (promesa rechazada, sin error visible) --
+// se agregó ese atributo al iframe, y acá además se atrapa el rechazo por
+// si vuelve a pasar en algún otro contexto embebido.
+window.teleprompterToggleFullscreen = function() {
+  const el = document.getElementById('teleprompterModal');
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!req) { alert('Tu navegador no permite pantalla completa desde acá.'); return; }
+    Promise.resolve(req.call(el)).catch(() => {
+      alert('No se pudo activar la pantalla completa. Si estás viendo esto desde "Contenidos propios" dentro del panel de admin, probá abrir el guion directamente en tu propio panel.');
+    });
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+  }
+};
+function actualizarBotonFullscreenTeleprompter() {
+  const btn = document.getElementById('tp-fullscreen-btn');
+  const on = document.fullscreenElement || document.webkitFullscreenElement;
+  if (btn) btn.innerHTML = ico(on ? 'minimize' : 'maximize', 'blanco') + (on ? ' Salir de pantalla completa' : ' Pantalla completa'); refreshIcons();
+}
+document.addEventListener('fullscreenchange', actualizarBotonFullscreenTeleprompter);
+document.addEventListener('webkitfullscreenchange', actualizarBotonFullscreenTeleprompter);
+
+function teleprompterSetPlaying(on) {
+  if (_tpScrollTimer) { clearInterval(_tpScrollTimer); _tpScrollTimer = null; }
+  const btn = document.getElementById('tp-play-btn');
+  if (on) {
+    btn.innerHTML = ico('pause', 'blanco') + ' Pausar'; refreshIcons();
+    const box = document.getElementById('tp-scroll');
+    // Posición acumulada en decimales: scrollTop se redondea a enteros en
+    // muchos navegadores, así que los niveles lentos (<1px por tick) no
+    // avanzarían nunca si se sumaran directo sobre scrollTop.
+    let pos = box.scrollTop;
+    _tpScrollTimer = setInterval(() => {
+      if (Math.abs(box.scrollTop - pos) > 2) pos = box.scrollTop; // scroll manual
+      pos += _tpSpeed * TP_PX_POR_NIVEL;
+      box.scrollTop = pos;
+      if (box.scrollTop >= box.scrollHeight - box.clientHeight - 1) teleprompterSetPlaying(false);
+    }, 30);
+  } else {
+    btn.innerHTML = ico('play', 'blanco') + ' Iniciar'; refreshIcons();
+  }
+}
+
+// Velocidad con un decimal (13/10: Vaneh pidió un intermedio entre 3 y 4, p.ej. 3,2). Cada toque = 0,1 nivel; _tpSpeed va en décimas
+// para evitar errores de coma flotante. Nivel 8,0 = la velocidad por defecto de siempre.
+window.teleprompterSpeed = function(delta) { // delta en niveles (±1 = ±0,1)
+  _tpSpeed = Math.max(5, Math.min(200, _tpSpeed + delta));
+  const doc = _tpPipWin ? _tpPipWin.document : document;
+  const el = doc.getElementById('tp-speed-val');
+  if (el) el.textContent = (_tpSpeed / 10).toFixed(1);
+};
+
+// ── Ajustes guardados con nombre (17/10, pedido de Vaneh) ──
+// Velocidad + tamaño de letra + espejado, guardados por NOMBRE y por usuario
+// (localStorage, clave con el email de quien está logueado -- así cada
+// persona tiene los suyos en su dispositivo). No viajan al servidor.
+function tpClavePresets() {
+  let email = 'anon';
+  try { email = (JSON.parse(localStorage.getItem('mh_user') || '{}').email || 'anon').toLowerCase(); } catch (e) {}
+  return 'tp_presets_v1_' + email;
+}
+function tpLeerPresets() {
+  try { const d = JSON.parse(localStorage.getItem(tpClavePresets()) || '{}'); return { items: d.items || {}, last: d.last || '' }; }
+  catch (e) { return { items: {}, last: '' }; }
+}
+function tpGuardarPresets(d) {
+  try { localStorage.setItem(tpClavePresets(), JSON.stringify(d)); return true; }
+  catch (e) { alert('No se pudo guardar en este navegador (¿modo privado o sin espacio?).'); return false; }
+}
+function tpDoc() { return _tpPipWin ? _tpPipWin.document : document; }
+function tpAplicarPreset(p) {
+  _tpSpeed = Math.max(5, Math.min(200, Number(p.speed) || 80));
+  _tpFontSize = Math.max(20, Math.min(96, Number(p.font) || 42));
+  const d = tpDoc();
+  d.getElementById('tp-text').style.fontSize = _tpFontSize + 'px';
+  d.getElementById('tp-mirror').checked = !!p.mirror;
+  d.getElementById('tp-text').style.transform = p.mirror ? 'scaleX(-1)' : '';
+  d.getElementById('tp-speed-val').textContent = (_tpSpeed / 10).toFixed(1);
+}
+function tpRefrescarPresets(aplicarUltimo) {
+  const d = tpDoc();
+  const sel = d.getElementById('tp-preset-sel');
+  if (!sel) return;
+  const { items, last } = tpLeerPresets();
+  const nombres = Object.keys(items).sort((a, b) => a.localeCompare(b, 'es'));
+  sel.innerHTML = '<option value="">Ajustes guardados…</option>' +
+    nombres.map(n => '<option></option>').join('');
+  nombres.forEach((n, i) => { // textContent: el nombre lo escribe el usuario
+    const o = sel.options[i + 1]; o.value = n;
+    o.textContent = `${n} (vel ${(items[n].speed / 10).toFixed(1)} · letra ${items[n].font})`;
+  });
+  if (aplicarUltimo && last && items[last]) { tpAplicarPreset(items[last]); sel.value = last; }
+  else if (last && items[last]) sel.value = last;
+}
+window.teleprompterPresetElegir = function(nombre) {
+  const d = tpLeerPresets();
+  if (!nombre || !d.items[nombre]) return;
+  tpAplicarPreset(d.items[nombre]);
+  d.last = nombre; tpGuardarPresets(d);
+};
+window.teleprompterPresetGuardar = function() {
+  const d = tpLeerPresets();
+  const actual = tpDoc().getElementById('tp-preset-sel')?.value || '';
+  let nombre = prompt('Nombre para este ajuste (velocidad ' + (_tpSpeed / 10).toFixed(1) + ', letra ' + _tpFontSize + '):', actual);
+  if (nombre === null) return;
+  nombre = nombre.trim().slice(0, 40);
+  if (!nombre) return;
+  if (d.items[nombre] && !confirm('Ya existe "' + nombre + '". ¿Lo reemplazo con la configuración actual?')) return;
+  d.items[nombre] = { speed: _tpSpeed, font: _tpFontSize, mirror: !!tpDoc().getElementById('tp-mirror').checked };
+  d.last = nombre;
+  if (tpGuardarPresets(d)) tpRefrescarPresets(false);
+};
+window.teleprompterPresetBorrar = function() {
+  const d = tpLeerPresets();
+  const nombre = tpDoc().getElementById('tp-preset-sel')?.value || '';
+  if (!nombre || !d.items[nombre]) { alert('Primero elegí un ajuste de la lista.'); return; }
+  if (!confirm('¿Borrar el ajuste "' + nombre + '"?')) return;
+  delete d.items[nombre]; if (d.last === nombre) d.last = '';
+  if (tpGuardarPresets(d)) tpRefrescarPresets(false);
+};
+
+window.teleprompterTogglePlay = function() {
+  teleprompterSetPlaying(!_tpScrollTimer);
+};
+
+window.teleprompterFont = function(delta) {
+  _tpFontSize = Math.max(20, Math.min(96, _tpFontSize + delta));
+  document.getElementById('tp-text').style.fontSize = _tpFontSize + 'px';
+};
+
+window.teleprompterMirror = function() {
+  const on = document.getElementById('tp-mirror').checked;
+  document.getElementById('tp-text').style.transform = on ? 'scaleX(-1)' : '';
+};
+
+// Modo flotante del teleprompter (29/09, pedido de Vaneh: "tiene que poder
+// salirse de la app... para poder ponerlo sobre la pantalla de la cámara y
+// filmar"). Dos caminos según lo que soporte el navegador:
+//
+// 1) Document Picture-in-Picture (Chrome/Android, y Chrome/Edge de
+//    escritorio): mueve el propio modal del teleprompter -- tal cual, con
+//    todos sus controles -- a una ventanita real, aparte, que flota
+//    siempre arriba de cualquier otra app. Sigue siendo 100% interactivo
+//    (play/pausa, velocidad, tamaño de letra) porque es el MISMO elemento
+//    del DOM, solo que reubicado en otro browsing context.
+// 2) Fallback para Safari/iPhone (no tiene Document PiP): la Picture-in-
+//    Picture de video SÍ existe en iOS, pero solo funciona sobre un
+//    elemento <video> real. El truco: se dibuja el texto en un <canvas>
+//    cuadro a cuadro (mismo scroll/velocidad/tamaño/espejado que el
+//    teleprompter normal), se captura ese canvas como un video en vivo
+//    (`canvas.captureStream`) y ESE stream es el que entra en PiP -- flota
+//    igual arriba de la cámara, aunque ya no se puede tocar (no hay forma
+//    de que un <video> en PiP reciba clicks): para pausar/cambiar
+//    velocidad hay que volver un momento al Hub.
+let _tpPipWin = null, _tpPipVideoEl = null, _tpPipCanvas = null, _tpPipRAF = null;
+
+window.teleprompterFloat = async function() {
+  if ('documentPictureInPicture' in window) {
+    try { await abrirTeleprompterPipDocumento(); return; }
+    catch (e) { console.error('Document PiP falló, probando fallback de video:', e); }
+  }
+  if (HTMLVideoElement.prototype.requestPictureInPicture) {
+    try { await abrirTeleprompterPipVideo(); return; }
+    catch (e) {
+      alert('No se pudo activar el modo flotante: ' + (e.message || e));
+      return;
+    }
+  }
+  alert('Tu navegador no soporta modo flotante. Probá desde Chrome (Android) o Safari (iPhone/Mac) actualizados.');
+};
+
+async function abrirTeleprompterPipDocumento() {
+  const modal = document.getElementById('teleprompterModal');
+  const pipWin = await documentPictureInPicture.requestWindow({ width: 380, height: 640 });
+  _tpPipWin = pipWin;
+  // Copiar las hojas de estilo (link + style) para que adentro de la
+  // ventana flotante se vea igual -- un <link> se puede volver a pedir
+  // sin problema de CORS aunque el documento original sí lo tuviera.
+  document.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
+    const clone = pipWin.document.createElement('link');
+    clone.rel = 'stylesheet';
+    clone.href = link.href;
+    pipWin.document.head.appendChild(clone);
+  });
+  document.querySelectorAll('style').forEach(style => {
+    pipWin.document.head.appendChild(style.cloneNode(true));
+  });
+  pipWin.document.body.style.margin = '0';
+  pipWin.document.body.appendChild(modal);
+  pipWin.addEventListener('pagehide', () => {
+    document.body.appendChild(modal);
+    _tpPipWin = null;
+  }, { once: true });
+}
+
+async function abrirTeleprompterPipVideo() {
+  const ANCHO = 480, ALTO = 854; // 9:16, liviano
+  const canvas = document.createElement('canvas');
+  canvas.width = ANCHO; canvas.height = ALTO;
+  _tpPipCanvas = canvas;
+
+  const video = document.createElement('video');
+  video.muted = true; video.playsInline = true; video.style.display = 'none';
+  document.body.appendChild(video);
+  _tpPipVideoEl = video;
+
+  const stream = canvas.captureStream(30);
+  video.srcObject = stream;
+  video.play().catch(() => {});
+
+  function dibujarFrame() {
+    const ctx = canvas.getContext('2d');
+    const box = document.getElementById('tp-scroll');
+    const texto = document.getElementById('tp-text').textContent || '';
+    const mirror = document.getElementById('tp-mirror').checked;
+    const escala = ANCHO / (box.clientWidth || ANCHO);
+    const fontPx = Math.round(_tpFontSize * escala);
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, ANCHO, ALTO);
+    ctx.save();
+    if (mirror) { ctx.translate(ANCHO, 0); ctx.scale(-1, 1); }
+    ctx.fillStyle = '#fff';
+    ctx.font = `600 ${fontPx}px 'Segoe UI', Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+
+    // Reflow simple del texto al ancho del canvas (mismo criterio que el
+    // white-space:pre-wrap del teleprompter normal: respeta saltos de
+    // línea ya existentes, y envuelve las líneas largas por palabra).
+    const lineHeight = fontPx * 1.6;
+    const maxWidth = ANCHO * 0.86;
+    const lineasFinales = [];
+    texto.split('\n').forEach(parrafo => {
+      const palabras = parrafo.split(' ');
+      let actual = '';
+      palabras.forEach(p => {
+        const prueba = actual ? actual + ' ' + p : p;
+        if (ctx.measureText(prueba).width > maxWidth && actual) {
+          lineasFinales.push(actual);
+          actual = p;
+        } else actual = prueba;
+      });
+      lineasFinales.push(actual);
+    });
+
+    const scrollFrac = box.scrollHeight > box.clientHeight ? box.scrollTop / (box.scrollHeight - box.clientHeight) : 0;
+    const altoTotalTexto = lineasFinales.length * lineHeight;
+    const offsetY = ALTO * 0.12 - scrollFrac * Math.max(0, altoTotalTexto - ALTO * 0.7);
+    lineasFinales.forEach((linea, i) => {
+      const y = offsetY + i * lineHeight;
+      if (y > -lineHeight && y < ALTO) ctx.fillText(linea, ANCHO / 2, y);
+    });
+    ctx.restore();
+    _tpPipRAF = requestAnimationFrame(dibujarFrame);
+  }
+  dibujarFrame();
+
+  await video.requestPictureInPicture();
+  video.addEventListener('leavepictureinpicture', () => {
+    if (_tpPipRAF) cancelAnimationFrame(_tpPipRAF);
+    video.remove();
+    _tpPipVideoEl = null; _tpPipCanvas = null;
+  }, { once: true });
+}
+
+window.removeTareaImg = function(i) {
+  _tareaImgList.splice(i, 1);
+  renderTareaImgThumbs();
+};
+
+// El objeto en memoria trae `src` como blob URL (para las subidas a R2)
+// que solo vale en esta sesión -- no se guarda. Lo que persiste es la
+// key (R2) o el base64 completo (legado, sin key).
+function serializarImagenesTarea(list) {
+  return list.filter(item => !item.subiendo).map(item =>
+    item.key ? { key: item.key, filename: item.filename, size: item.size } : { src: item.src }
+  );
+}
+
+async function addTareaImgFromFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  if (_tareaImgList.length >= 3) { alert('M\u00e1ximo 3 im\u00e1genes por tarea.'); return; }
+  if (file.size > 15 * 1024 * 1024) { alert('La imagen supera 15 MB. Sub\u00edla a Drive y peg\u00e1 el link.'); return; }
+  const placeholder = { subiendo: true };
+  _tareaImgList.push(placeholder);
+  renderTareaImgThumbs();
+  try {
+    const subido = await uploadArchivo(clientId, file);
+    const idx = _tareaImgList.indexOf(placeholder);
+    if (idx === -1) return; // se saco mientras subia
+    _tareaImgList[idx] = { key: subido.key, filename: subido.filename, size: subido.size };
+    renderTareaImgThumbs();
+  } catch (err) {
+    _tareaImgList.splice(_tareaImgList.indexOf(placeholder), 1);
+    renderTareaImgThumbs();
+    alert('No se pudo subir la imagen: ' + (err.message || 'reintenta.'));
+  }
+}
+
+// \u2500\u2500 Archivos adjuntos de una tarea -- viven en STATE.home.archivos (la
+// misma lista que "Links y Archivos"), ac\u00e1 solo se guarda el id. Subir un
+// archivo lo guarda YA en Archivos (persiste al toque, no espera a que se
+// guarde la tarea) -- as\u00ed queda centralizado y no duplicado por tarea.
+function renderTareaArchivosChips() {
+  const box = document.getElementById('tarea-archivos-list');
+  if (!box) return;
+  const archivos = STATE.home.archivos || [];
+  box.innerHTML = _tareaArchivosPendientes.map((id, i) => {
+    const a = archivos.find(x => String(x.id) === String(id));
+    if (!a) return '';
+    const abrir = a.subido ? `abrirArchivoSubido('${a.id}')` : `window.open('${(a.url || '').replace(/'/g, "\\'")}','_blank')`;
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f8fafc;border:1px solid var(--border);border-radius:6px;">
+      <i data-lucide="${ARCHIVO_ICONS[a.tipo] || 'file'}" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;stroke-width:1.75;"></i>
+      <span style="flex:1;font-size:12.5px;cursor:pointer;color:var(--primary);text-decoration:underline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" onclick="${abrir}">${a.titulo}</span>
+      <button type="button" onclick="quitarTareaArchivo(${i})" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:15px;padding:0 2px;flex-shrink:0;" title="Quitar de esta tarea (el archivo sigue en Links y Archivos)">\u00d7</button>
+    </div>`;
+  }).join('') || '<p style="font-size:12px;color:var(--text-muted);">Sin archivos adjuntos.</p>';
+  setTimeout(refreshIcons, 30);
+}
+
+window.quitarTareaArchivo = function(i) {
+  _tareaArchivosPendientes.splice(i, 1);
+  renderTareaArchivosChips();
+};
+
+document.getElementById('tarea-archivo-input')?.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (file.size > 50 * 1024 * 1024) { alert('El archivo supera los 50 MB. Para archivos m\u00e1s pesados us\u00e1 un link de Drive/Dropbox desde "Links y Archivos".'); return; }
+  try {
+    const subido = await uploadArchivo(clientId, file);
+    if (!STATE.home.archivos) STATE.home.archivos = [];
+    const obj = {
+      id: Date.now(), titulo: file.name, desc: '',
+      tipo: tipoDesdeArchivo(subido.filename), subido: true,
+      key: subido.key, filename: subido.filename, size: subido.size,
+    };
+    STATE.home.archivos.push(obj);
+    await saveHomeData(clientId, STATE.home);
+    _tareaArchivosPendientes.push(obj.id);
+    renderTareaArchivosChips();
+    if (currentSection === 'links') renderArchivos(document.getElementById('archivos-col-body'));
+  } catch (err) {
+    alert('Error al subir el archivo: ' + err.message);
+  }
+});
+
+// Subir una carpeta entera desde una tarea -- mismo mecanismo que el botón
+// de Links y Archivos (sube TODO a STATE.home.archivos, agrupado en una
+// carpeta con el nombre elegido), pero además deja los accesos directos
+// enganchados a esta tarea, igual que "Adjuntar archivo" con uno solo.
+document.getElementById('tarea-archivo-folder-input')?.addEventListener('change', async (e) => {
+  const files = [...e.target.files].filter(f => !f.name.startsWith('.'));
+  e.target.value = '';
+  if (!files.length) return;
+  const folderName = (files[0].webkitRelativePath || files[0].name).split('/')[0] || 'Carpeta subida';
+  const statusEl = document.getElementById('tarea-archivo-folder-status');
+  if (!STATE.home.archivos) STATE.home.archivos = [];
+  if (!STATE.home.archivoCarpetas) STATE.home.archivoCarpetas = [];
+  if (!STATE.home.archivoCarpetas.includes(folderName)) STATE.home.archivoCarpetas.push(folderName);
+
+  let ok = 0, saltados = 0;
+  const nuevosIds = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (statusEl) statusEl.textContent = `Subiendo ${i + 1}/${files.length}: ${file.name}…`;
+    if (file.size > 50 * 1024 * 1024) { saltados++; continue; }
+    try {
+      const subido = await uploadArchivo(clientId, file);
+      const obj = {
+        id: Date.now() + i, titulo: file.name, desc: '',
+        tipo: tipoDesdeArchivo(subido.filename), subido: true,
+        key: subido.key, filename: subido.filename, size: subido.size,
+        carpeta: folderName,
+      };
+      STATE.home.archivos.push(obj);
+      nuevosIds.push(obj.id);
+      ok++;
+    } catch (err) { saltados++; }
+  }
+  if (statusEl) statusEl.textContent = 'Guardando...';
+  try {
+    await saveHomeData(clientId, STATE.home);
+  } catch (err) {
+    alert('Se subieron los archivos pero no se pudo guardar la lista: ' + err.message);
+  }
+  _tareaArchivosPendientes.push(...nuevosIds);
+  if (statusEl) statusEl.textContent = '';
+  renderTareaArchivosChips();
+  if (currentSection === 'links') renderArchivos(document.getElementById('archivos-col-body'));
+  if (saltados) alert(`Se subieron ${ok} archivo${ok !== 1 ? 's' : ''}. ${saltados} se saltearon (pesan más de 50 MB o falló la subida).`);
+});
+
+window.openTareaModal = function(id, defaultEstado) {
+  if (id && user.role === 'client') {
+    const tCheck = STATE.tareas.find(t => t.id === id);
+    if (tCheck && tCheck.visibleParaCliente !== true) return; // tarea interna (default), el cliente no puede abrirla
+  }
+  editingTarea = id ? STATE.tareas.find(t => t.id === id) : null;
+  const t = editingTarea || {};
+  // El modal tiene que estar visible ANTES de renderizar las subtareas:
+  // el auto-grow de sus textareas mide `scrollHeight`, que da 0 mientras
+  // el modal todavía tiene la clase "hidden" (display:none) -- eso
+  // dejaba el título de cada subtarea con altura 0, invisible, cuando
+  // se entraba directo a esta pantalla (ej. "Abrir en panel del
+  // cliente" desde el admin, que carga la página de cero).
+  document.getElementById('tareaModal').classList.remove('hidden');
+  document.getElementById('tarea-modal-title').textContent = editingTarea ? `Editar tarea${t.numero ? ' #' + codigoTarea(t) : ''}` : 'Nueva tarea';
+  const _copyLinkTareaBtn = document.getElementById('copyLinkTareaBtn');
+  _copyLinkTareaBtn.classList.toggle('hidden', !editingTarea);
+  _copyLinkTareaBtn.onclick = () => copiarLinkItem('tarea', t.id);
+  document.getElementById('tf-titulo').value = t.titulo || '';
+  document.getElementById('tf-estado').value = t.estado || defaultEstado || 'Sin empezar';
+  document.getElementById('tf-prioridad').value = t.prioridad || 'Media';
+  document.getElementById('tf-cuadrante').value = t.cuadrante || '';
+  document.getElementById('tf-vencimiento').value = t.vencimiento || '';
+  document.getElementById('tf-hora').value = t.hora || '';
+  document.getElementById('tf-notas').innerHTML = linkify(t.notas || '');
+  const tfVisibleCliente = document.getElementById('tf-visible-cliente');
+  if (tfVisibleCliente) {
+    tfVisibleCliente.checked = t.visibleParaCliente === true;
+    const wrap = tfVisibleCliente.closest('.form-group');
+    if (wrap) wrap.style.display = user.role === 'client' ? 'none' : '';
+  }
+  const tfEsProyecto = document.getElementById('tf-es-proyecto');
+  if (tfEsProyecto) tfEsProyecto.checked = t.esProyecto === true;
+  document.getElementById('tf-fecha-inicio').value = t.fechaInicio || '';
+  toggleTfEsProyecto();
+  document.getElementById('tf-recurrencia').value = t.recurrencia || '';
+  document.getElementById('tf-link').value = t.url || t.linkRef || '';
+  // Imágenes -- tareas viejas tienen strings base64 sueltos, las nuevas
+  // objetos {key,filename,size} subidos a R2 (ver comentario en
+  // renderTareaImgThumbs). Normalizamos las dos formas a {src|key}.
+  _tareaImgList = (t.imagenes || []).map(item => typeof item === 'string' ? { src: item } : { ...item });
+  renderTareaImgThumbs();
+  // Archivos adjuntos (referencias a STATE.home.archivos, no el archivo en sí)
+  _tareaArchivosPendientes = t.archivosAdjuntos ? [...t.archivosAdjuntos] : [];
+  renderTareaArchivosChips();
+  document.getElementById('deleteTareaBtn').style.display = editingTarea ? '' : 'none';
+  document.getElementById('archiveTareaBtn').style.display = editingTarea ? '' : 'none';
+  const tfAsignado = document.getElementById('tf-asignado');
+  if (tfAsignado) tfAsignado.innerHTML = getAsignarOptions(t.asignado?.email || '');
+  renderAsignadoVisto('tf-asignado', t);
+  if (editingTarea) marcarAsignacionVista(t, saveTarea, STATE.tareas).then(() => renderAsignadoVisto('tf-asignado', t));
+
+  // dias-semana
+  const diasGroup = document.getElementById('dias-semana-group');
+  diasGroup.style.display = (t.recurrencia === 'dias-semana') ? '' : 'none';
+  document.querySelectorAll('.dia-check').forEach(cb => {
+    cb.checked = (t.diasSemana || []).includes(cb.value);
+  });
+  actualizarPreviewRecurrenciaTf();
+
+  // Subtareas — disponibles también al crear una tarea nueva
+  document.getElementById('subtareas-section').style.display = '';
+  const stAsignadoInput = document.getElementById('st-asignado-input');
+  if (stAsignadoInput) stAsignadoInput.innerHTML = getAsignarOptions('');
+  document.getElementById('st-titulo-input').value = '';
+  _tareaSubtareasPendientes = t.subtareas ? [...t.subtareas] : [];
+  renderSubtareas(_tareaSubtareasPendientes);
+
+  renderComments('tarea', t.comentarios || []);
+  document.getElementById('tarea-comment-input').value = '';
+  const _tnote = document.getElementById('tarea-new-note');
+  if (_tnote) _tnote.style.display = editingTarea ? 'none' : '';
+  const _tinputWrap = document.getElementById('tarea-comment-input-wrap');
+  if (_tinputWrap) _tinputWrap.style.display = editingTarea ? '' : 'none';
+  const avisoBorrador = document.getElementById('tarea-borrador-aviso');
+  if (avisoBorrador) avisoBorrador.style.display = 'none';
+
+  // Permisos por tarea + historial (27/09) -- "restringidaA" es una regla
+  // del EQUIPO, no del cliente: un cliente real logueado no la ve ni la
+  // puede tocar (ya tiene su propio control, "Visible para el cliente").
+  const tfRestrGroup = document.getElementById('tf-restr-modo')?.closest('.form-group');
+  if (tfRestrGroup) tfRestrGroup.style.display = user.role === 'client' ? 'none' : '';
+  setTfRestrUI(t.restringidaA || null);
+  const tfHistorialGroup = document.getElementById('tf-historial-group');
+  if (tfHistorialGroup) tfHistorialGroup.style.display = user.role === 'client' ? 'none' : '';
+  document.getElementById('tf-historial-list').innerHTML = renderHistorialHtml(t.historialCambios);
+  _tareaSnapshotHistorial = editingTarea ? JSON.parse(JSON.stringify(editingTarea)) : null;
+  const tfDupWarn = document.getElementById('tf-dup-warning');
+  if (tfDupWarn) tfDupWarn.style.display = 'none';
+  wireDupCheck('tf', 'tf-titulo', 'tf-dup-warning', () => STATE.tareas, () => !editingTarea);
+
+  // El modal quedaba con el scroll de la última tarea que se había
+  // visto (ej. cerrada más abajo del todo) -- una tarea nueva tiene que
+  // arrancar siempre desde el título, no donde quedó la vista anterior.
+  document.querySelector('#tareaModal .modal-body').scrollTop = 0;
+  restaurarBorradorTarea(id || null);
+};
+let _tareaSnapshotHistorial = null;
+
+// Advertencia de duplicado -- wiring genérico del input con debounce.
+// Solo un modal en este archivo (tf-*), pero se deja parametrizado igual
+// que en admin/index.html para que ambos bloques queden espejados.
+const _dupCheckTimers = {};
+function wireDupCheck(prefix, tituloInputId, warnId, getLista, esCreacion) {
+  const input = document.getElementById(tituloInputId);
+  if (!input) return;
+  input.oninput = () => {
+    clearTimeout(_dupCheckTimers[prefix]);
+    _dupCheckTimers[prefix] = setTimeout(() => {
+      const warn = document.getElementById(warnId);
+      if (!warn) return;
+      if (!esCreacion()) { warn.style.display = 'none'; return; }
+      const match = buscarTareaSimilar(input.value, getLista(), null);
+      if (match) {
+        warn.style.display = '';
+        warn.textContent = `⚠️ Ya existe una tarea similar: "${match.titulo}" (asignada a ${match.asignado?.nombre || 'sin asignar'}, estado ${match.estado}). Revisá antes de crear otra.`;
+      } else warn.style.display = 'none';
+    }, 400);
+  };
+}
+
+// ── Borrador de tarea (localStorage) ─────────────────────────
+// Título, descripción y el comentario que se esté escribiendo se pierden
+// si se cierra el modal sin tocar "Guardar" -- Vaneh lo reportó
+// explícitamente (02/09). No es un autoguardado real contra el servidor
+// (eso ya existe para subtareas/archivos, ver más arriba); esto es un
+// borrador LOCAL del navegador, para no perder lo tipeado si se cierra
+// el modal sin querer o se aprieta "Cancelar".
+function tareaDraftKey(id) { return `hub_draft_tarea_${clientId}_${id || 'nueva'}`; }
+
+function guardarBorradorTarea() {
+  const modal = document.getElementById('tareaModal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  const draft = {
+    titulo: document.getElementById('tf-titulo').value,
+    notas: document.getElementById('tf-notas').innerHTML,
+    comentario: document.getElementById('tarea-comment-input')?.value || '',
+    // Las subtareas de una tarea EXISTENTE ya se autoguardan solas contra
+    // el servidor apenas se tildan (ver toggleSubtarea) -- el servidor
+    // manda. Guardarlas también acá era contraproducente: un borrador
+    // viejo de una sesión de prueba anterior (nunca se borra hasta
+    // apretar "Guardar") terminaba PISANDO el progreso real ya guardado
+    // apenas se reabría la tarea (bug reportado por Vaneh, 02/09 -- las
+    // subtareas volvían a aparecer sin tildar). Para una tarea NUEVA (sin
+    // guardar todavía) sí hace falta, porque ahí no hay nada persistido.
+    subtareas: editingTarea ? undefined : _tareaSubtareasPendientes,
+  };
+  try { localStorage.setItem(tareaDraftKey(editingTarea?.id), JSON.stringify(draft)); } catch (e) {}
+}
+
+function limpiarBorradorTarea(id) {
+  try { localStorage.removeItem(tareaDraftKey(id)); } catch (e) {}
+}
+
+function restaurarBorradorTarea(id) {
+  let draft;
+  try {
+    const raw = localStorage.getItem(tareaDraftKey(id));
+    if (!raw) return;
+    draft = JSON.parse(raw);
+  } catch (e) { return; }
+  const tituloEl = document.getElementById('tf-titulo');
+  const notasEl = document.getElementById('tf-notas');
+  const comentEl = document.getElementById('tarea-comment-input');
+  let cambios = false;
+  if (draft.titulo && draft.titulo !== tituloEl.value) { tituloEl.value = draft.titulo; cambios = true; }
+  if (draft.notas && draft.notas !== notasEl.innerHTML) { notasEl.innerHTML = draft.notas; cambios = true; }
+  if (comentEl && draft.comentario) { comentEl.value = draft.comentario; cambios = true; }
+  // Solo para una tarea NUEVA -- en una existente las subtareas ya viven
+  // guardadas en el servidor (autoguardado), restaurar acá un borrador
+  // viejo pisaría progreso real ya persistido. Ver guardarBorradorTarea.
+  if (!id && Array.isArray(draft.subtareas) && JSON.stringify(draft.subtareas) !== JSON.stringify(_tareaSubtareasPendientes)) {
+    _tareaSubtareasPendientes = draft.subtareas;
+    renderSubtareas(_tareaSubtareasPendientes);
+    cambios = true;
+  }
+  if (!cambios) return;
+  const aviso = document.getElementById('tarea-borrador-aviso');
+  if (aviso) {
+    aviso.style.display = 'flex';
+    aviso.querySelector('button').onclick = () => { limpiarBorradorTarea(id); openTareaModal(id || null); };
+  }
+}
+
+['tf-titulo', 'tarea-comment-input'].forEach(idEl => {
+  document.getElementById(idEl)?.addEventListener('input', guardarBorradorTarea);
+});
+document.getElementById('tf-notas')?.addEventListener('input', guardarBorradorTarea);
+
+function renderSubtareas(subtareas) {
+  const list = document.getElementById('subtareas-list');
+  list.innerHTML = subtareas.map((s, i) => `
+    <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 10px;background:${s.done?'#f0fdf4':'#f8fafc'};border-radius:6px;border:1px solid ${s.done?'#bbf7d0':'var(--border)'};">
+      <input type="checkbox" ${s.done?'checked':''} onchange="toggleSubtarea(${i})" style="flex-shrink:0;margin-top:3px;">
+      <textarea rows="1" class="subtarea-titulo-ta" oninput="autoGrowTextarea(this)" onchange="renombrarSubtarea(${i}, this.value)" style="flex:1;min-width:0;font-size:13px;word-break:break-word;border:none;background:transparent;padding:2px 0;font-family:inherit;resize:none;overflow:hidden;line-height:1.4;${s.done?'text-decoration:line-through;color:var(--text-muted);':''}">${escapeHtml(s.titulo)}</textarea>
+      <select onchange="reasignarSubtarea(${i}, this)" style="font-size:10px;color:var(--primary);font-weight:600;max-width:120px;border:none;background:transparent;cursor:pointer;flex-shrink:0;">${getAsignarOptions(s.asignado?.email || '')}</select>
+      <button onclick="deleteSubtarea(${i})" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:16px;padding:0 2px;flex-shrink:0;" title="Eliminar">×</button>
+    </div>
+  `).join('') || '<p style="font-size:12px;color:var(--text-muted);">Sin subtareas. Agregá una.</p>';
+  list.querySelectorAll('.subtarea-titulo-ta').forEach(autoGrowTextarea);
+}
+
+window.reasignarSubtarea = function(idx, sel) {
+  if (!_tareaSubtareasPendientes[idx]) return;
+  const email = sel.value;
+  const nombre = sel.selectedOptions[0]?.dataset.nombre || '';
+  _tareaSubtareasPendientes[idx].asignado = email ? { email, nombre } : null;
+  guardarBorradorTarea();
+};
+
+window.agregarSubtareaInline = function() {
+  const tituloEl = document.getElementById('st-titulo-input');
+  const asignadoEl = document.getElementById('st-asignado-input');
+  const titulo = tituloEl.value.trim();
+  if (!titulo) return;
+  const email = asignadoEl.value;
+  const nombre = asignadoEl.selectedOptions[0]?.dataset.nombre || '';
+  _tareaSubtareasPendientes.push({ titulo, done: false, asignado: email ? { email, nombre } : null });
+  renderSubtareas(_tareaSubtareasPendientes);
+  guardarBorradorTarea();
+  tituloEl.value = '';
+  tituloEl.focus();
+};
+
+window.toggleTfEsProyecto = function() {
+  const checked = document.getElementById('tf-es-proyecto').checked;
+  document.getElementById('tf-fecha-inicio-group').classList.toggle('hidden', !checked);
+  document.getElementById('tf-vencimiento-label').textContent = checked ? 'Fecha de finalización' : 'Fecha de vencimiento';
+};
+
+window.toggleSubtarea = async function(idx) {
+  if (!_tareaSubtareasPendientes[idx]) return;
+  const s = _tareaSubtareasPendientes[idx];
+  s.done = !s.done;
+  // completadoEn en la subtarea (no solo el booleano "done") es lo que
+  // permite que aparezca en "Trabajo realizado" del mes en el Home del
+  // cliente -- sin fecha no hay forma de saber en qué mes se hizo.
+  s.completadoEn = s.done ? new Date().toISOString().split('T')[0] : null;
+  renderSubtareas(_tareaSubtareasPendientes);
+  guardarBorradorTarea();
+  if (!editingTarea) return; // tarea nueva, todavía sin guardar -- nada que persistir aún
+  // Autoguardado: si esto esperara al botón "Guardar" de toda la tarea,
+  // tildar una subtarea se perdía en cuanto se cerraba el modal sin
+  // acordarse de guardar (reportado por Vaneh, 02/09 -- "marqué una
+  // subtarea hecha y no aparece en el listado del cliente"). Además, si
+  // con este cambio quedaron TODAS las subtareas hechas, la tarea pasa
+  // sola a "Listo" para que se refleje en el resumen de Tareas del Home.
+  editingTarea.subtareas = [..._tareaSubtareasPendientes];
+  const todasHechas = editingTarea.subtareas.length > 0 && editingTarea.subtareas.every(s => s.done);
+  if (todasHechas && editingTarea.estado !== 'Listo') {
+    editingTarea.estado = 'Listo';
+    editingTarea.visibleParaCliente = true;
+    editingTarea.completadoEn = editingTarea.completadoEn || new Date().toISOString().split('T')[0];
+    const nuevo = regenerarSiRecurrente(editingTarea, STATE.tareas);
+    if (nuevo) {
+      // La que se acaba de completar queda guardada aparte, ya "Lista" --
+      // seguimos editando el próximo ciclo en este mismo modal, igual que
+      // se veía antes.
+      editingTarea = nuevo;
+      _tareaSubtareasPendientes = [...nuevo.subtareas];
+    }
+    const estadoSel = document.getElementById('tf-estado');
+    if (estadoSel) estadoSel.value = editingTarea.estado;
+    const vencimientoEl = document.getElementById('tf-vencimiento');
+    if (vencimientoEl) vencimientoEl.value = editingTarea.vencimiento || '';
+    renderSubtareas(_tareaSubtareasPendientes);
+  }
+  try {
+    const saved = await saveTarea(clientId, editingTarea, STATE.tareas);
+    const i = STATE.tareas.findIndex(t => t.id === saved.id);
+    if (i > -1) STATE.tareas[i] = saved;
+    editingTarea = saved;
+    updateBadges();
+    if (currentSection === 'tareas') refreshTareasView();
+  } catch (e) { /* si falla la conexión, el check sigue visible en el modal y se reintenta al guardar la tarea entera */ }
+};
+
+window.renombrarSubtarea = async function(idx, nuevoTitulo) {
+  if (!_tareaSubtareasPendientes[idx]) return;
+  const titulo = nuevoTitulo.trim();
+  if (!titulo) { renderSubtareas(_tareaSubtareasPendientes); return; } // no permitir vaciarla
+  _tareaSubtareasPendientes[idx].titulo = titulo;
+  guardarBorradorTarea();
+  if (!editingTarea) return;
+  editingTarea.subtareas = [..._tareaSubtareasPendientes];
+  try {
+    const saved = await saveTarea(clientId, editingTarea);
+    const i = STATE.tareas.findIndex(t => t.id === saved.id);
+    if (i > -1) STATE.tareas[i] = saved;
+    editingTarea = saved;
+    if (currentSection === 'tareas') refreshTareasView();
+  } catch (e) { /* se reintenta al guardar la tarea entera */ }
+};
+
+window.deleteSubtarea = function(idx) {
+  _tareaSubtareasPendientes.splice(idx, 1);
+  renderSubtareas(_tareaSubtareasPendientes);
+  guardarBorradorTarea();
+};
+
+function closeTareaModal() { document.getElementById('tareaModal').classList.add('hidden'); }
+document.getElementById('closeTareaModal').addEventListener('click', closeTareaModal);
+document.getElementById('closeTareaModal2').addEventListener('click', closeTareaModal);
+
+// Área de imágenes en tarea
+const tareaImgArea = document.getElementById('tarea-img-area');
+const tareaImgInput = document.getElementById('tarea-img-input');
+// click en el área no abre el explorador — el botón "📎 Subir archivo" lo maneja
+// Ctrl+V se captura en el listener global de paste
+if (tareaImgInput) {
+  tareaImgInput.addEventListener('change', e => {
+    [...e.target.files].forEach(addTareaImgFromFile);
+    e.target.value = '';
+  });
+}
+
+document.getElementById('saveTareaBtn').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  if (btn.disabled) return;
+  const titulo = document.getElementById('tf-titulo').value.trim();
+  if (!titulo) { alert('El título es obligatorio.'); return; }
+  if (_tareaImgList.some(i => i.subiendo)) { alert('Esperá a que termine de subir la imagen.'); return; }
+  const draftIdAlGuardar = editingTarea?.id || null;
+  btn.disabled = true; btn.textContent = 'Guardando…';
+  try {
+    const recurrencia = document.getElementById('tf-recurrencia').value;
+    const diasSemana = recurrencia === 'dias-semana'
+      ? Array.from(document.querySelectorAll('.dia-check:checked')).map(cb => cb.value)
+      : [];
+    const tfAsignadoEl = document.getElementById('tf-asignado');
+    const tfAsignadoEmail = tfAsignadoEl ? tfAsignadoEl.value : '';
+    const tfAsignadoNombre = tfAsignadoEl ? (tfAsignadoEl.selectedOptions[0]?.dataset.nombre || '') : '';
+    const prevTfAsignadoEmail = editingTarea?.asignado?.email || '';
+    const tfAsignadoObj = tfAsignadoEmail ? (tfAsignadoEmail === prevTfAsignadoEmail
+      ? { ...editingTarea.asignado, email: tfAsignadoEmail, nombre: tfAsignadoNombre }
+      : { email: tfAsignadoEmail, nombre: tfAsignadoNombre, asignadoPor: { email: user.email, nombre: user.name || user.email } }) : null;
+    const tfVisibleClienteEl = document.getElementById('tf-visible-cliente');
+    const tfEstadoVal = document.getElementById('tf-estado').value;
+    const tfVisibleCliente = tfEstadoVal === 'Listo' ? true : (tfVisibleClienteEl ? tfVisibleClienteEl.checked : false);
+    const tfCompletadoEn = tfEstadoVal === 'Listo' ? (editingTarea?.estado === 'Listo' ? editingTarea.completadoEn : new Date().toISOString().split('T')[0]) : null;
+    const numero = editingTarea?.numero || (Math.max(0, ...STATE.tareas.map(t => t.numero || 0)) + 1);
+    const esProyectoVal = document.getElementById('tf-es-proyecto')?.checked === true;
+    const obj = { ...(editingTarea||{}), numero, titulo, estado: tfEstadoVal, prioridad: document.getElementById('tf-prioridad').value, cuadrante: document.getElementById('tf-cuadrante').value || null, vencimiento: document.getElementById('tf-vencimiento').value || null, hora: document.getElementById('tf-hora').value || null, fechaInicio: esProyectoVal ? (document.getElementById('tf-fecha-inicio').value || null) : null, notas: document.getElementById('tf-notas').innerHTML, recurrencia: recurrencia || null, diasSemana, url: document.getElementById('tf-link').value || null, subtareas: [..._tareaSubtareasPendientes], imagenes: serializarImagenesTarea(_tareaImgList), archivosAdjuntos: [..._tareaArchivosPendientes], comentarios: editingTarea?.comentarios || [], asignado: tfAsignadoObj, visibleParaCliente: tfVisibleCliente, completadoEn: tfCompletadoEn, esProyecto: esProyectoVal, restringidaA: user.role !== 'client' ? leerTfRestrUI() : (editingTarea?.restringidaA ?? null), creadoPor: editingTarea ? editingTarea.creadoPor : user.email };
+    // Historial de cambios (27/09) -- solo se registra al EDITAR una tarea
+    // ya existente, comparando contra el snapshot tomado al abrir el modal.
+    if (_tareaSnapshotHistorial) aplicarHistorial(obj, _tareaSnapshotHistorial, user);
+    // Recién se marcó "Lista" en este mismo guardado (no ya lo estaba) --
+    // si es recurrente, regenerarSiRecurrente crea el próximo ciclo de una,
+    // sin esperar el cron, y esta misma (obj) queda "Lista" para siempre.
+    if (tfEstadoVal === 'Listo' && editingTarea?.estado !== 'Listo') regenerarSiRecurrente(obj, STATE.tareas);
+    const saved = await Promise.race([
+      saveTarea(clientId, obj, STATE.tareas),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Tiempo de espera agotado. Verificá tu conexión.')), 15000)),
+    ]);
+    if (editingTarea) { const i = STATE.tareas.findIndex(t => t.id === saved.id); STATE.tareas[i] = saved; }
+    else STATE.tareas.push(saved);
+    notifyAsignacion('tarea', saved, prevTfAsignadoEmail);
+    limpiarBorradorTarea(draftIdAlGuardar);
+    closeTareaModal();
+    updateBadges();
+    if (currentSection === 'tareas') refreshTareasView();
+    else renderSection('home');
+  } catch (err) {
+    alert('Error al guardar: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Guardar';
+  }
+});
+
+document.getElementById('deleteTareaBtn').addEventListener('click', async () => {
+  if (!editingTarea || !confirm('¿Eliminar esta tarea?')) return;
+  await deleteTarea(clientId, editingTarea.id);
+  limpiarBorradorTarea(editingTarea.id);
+  STATE.tareas = STATE.tareas.filter(t => t.id !== editingTarea.id);
+  closeTareaModal();
+  updateBadges();
+  refreshTareasView();
+});
+
+document.getElementById('archiveTareaBtn').addEventListener('click', async () => {
+  if (!editingTarea) return;
+  editingTarea.archivado = true;
+  await saveTarea(clientId, editingTarea);
+  const i = STATE.tareas.findIndex(t => t.id === editingTarea.id);
+  STATE.tareas[i] = editingTarea;
+  closeTareaModal();
+  updateBadges();
+  refreshTareasView();
+});
+
+window.eliminarTareaDirecta = async function(id) {
+  if (!confirm('¿Eliminar esta tarea?')) return;
+  await deleteTarea(clientId, id);
+  STATE.tareas = STATE.tareas.filter(t => t.id !== id);
+  updateBadges();
+  refreshTareasView();
+};
+
+window.desarchivarTarea = async function(id) {
+  const t = STATE.tareas.find(x => x.id === id);
+  if (!t) return;
+  t.archivado = false;
+  await saveTarea(clientId, t);
+  updateBadges();
+  refreshTareasView();
+};
+
+// ──────────────────────────────────────────────────────
+// PAUTA
+// ──────────────────────────────────────────────────────
+let activePautaTab = 'todas';
+
+function renderPauta(container) {
+  const plats = ['Todas', 'Meta Ads', 'Google Ads', 'TikTok Ads', 'LinkedIn Ads'];
+  const filtered = activePautaTab === 'todas' ? STATE.campanas
+    : STATE.campanas.filter(c => c.plataforma === activePautaTab);
+  const total = filtered.reduce((s,c) => s + (c.presupuesto||0), 0);
+  const gastado = filtered.reduce((s,c) => s + (c.gastado||0), 0);
+  const activas = filtered.filter(c => c.estado === 'Activa').length;
+  const roasTotal = gastado ? filtered.reduce((s,c)=>s+(c.ingresos||0),0) / gastado : 0;
+
+  // Presupuesto asignado a mano desde el panel admin (sección Procesos) --
+  // avisa si las campañas cargadas suman más de lo que se asignó.
+  const presupuesto = STATE.client?.presupuesto;
+  const asignado = activePautaTab === 'todas' ? presupuesto?.total : presupuesto?.porPlataforma?.[activePautaTab];
+  const excedeAsignado = asignado > 0 && total > asignado;
+
+  const CUENTAS_PUB_PLAT = [
+    { key: 'meta', label: 'Meta Ads' }, { key: 'google', label: 'Google Ads' },
+    { key: 'tiktok', label: 'TikTok Ads' }, { key: 'linkedin', label: 'LinkedIn Ads' },
+  ];
+  const cuentasPub = STATE.client?.cuentasPublicitarias || {};
+  const cuentasConfiguradas = CUENTAS_PUB_PLAT.filter(p => cuentasPub[p.key]?.accountId);
+
+  container.innerHTML = `
+    ${cuentasConfiguradas.length ? `
+    <div class="card" style="padding:12px 16px;margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:8px;">📢 Cuenta publicitaria asociada</div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;">
+        ${cuentasConfiguradas.map(p => `<div style="font-size:12px;"><strong>${p.label}:</strong> ${cuentasPub[p.key].accountId}</div>`).join('')}
+      </div>
+    </div>` : ''}
+
+    <div class="tabs" id="pauta-tabs" style="margin-bottom:16px;">
+      ${plats.map(p => `<button class="tab-btn ${activePautaTab===(p==='Todas'?'todas':p)?'active':''}" data-tab="${p==='Todas'?'todas':p}">${p}</button>`).join('')}
+    </div>
+
+    ${excedeAsignado ? `<div class="card" style="padding:12px 16px;margin-bottom:16px;background:#fef2f2;border-color:#fecaca;">
+      <p style="font-size:13px;color:#dc2626;font-weight:600;margin:0;">⚠️ Las campañas ${activePautaTab === 'todas' ? '' : `de ${activePautaTab} `}suman $${fmtNum(total)} de presupuesto, pero el presupuesto asignado es de $${fmtNum(asignado)}.</p>
+    </div>` : ''}
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;">
+      ${[
+        { label: 'Campañas activas', val: activas, icon: 'activity' },
+        { label: 'Presupuesto total', val: '$'+fmtNum(total), icon: 'dollar-sign' },
+        { label: 'Gastado', val: '$'+fmtNum(gastado), icon: 'credit-card' },
+        { label: 'ROAS promedio', val: roasTotal ? roasTotal.toFixed(2)+'x' : '—', icon: 'trending-up' },
+      ].map(m => `<div class="card" style="padding:16px;"><i data-lucide="${m.icon}" style="width:20px;height:20px;color:var(--accent);stroke-width:1.5;margin-bottom:8px;"></i><div style="font-size:22px;font-weight:800;">${m.val}</div><div style="font-size:12px;color:var(--text-muted);">${m.label}</div></div>`).join('')}
+    </div>
+
+    ${filtered.length ? filtered.map(c => {
+      const pct = c.presupuesto ? Math.round((c.gastado||0)/c.presupuesto*100) : 0;
+      const statusCol = c.estado==='Activa'?'#10b981':c.estado==='Pausada'?'#f59e0b':'#94a3b8';
+      return `
+        <div class="campaign-card">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+            <div class="campaign-name" style="flex:1;">${c.nombre}</div>
+            <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:${statusCol}22;color:${statusCol};">${c.estado}</span>
+            <span style="font-size:12px;color:var(--text-muted);">${c.plataforma||''}</span>
+            <button class="btn btn-secondary btn-sm" onclick="openCampanaModal('${c.id}')">Editar</button>
+          </div>
+          <div class="campaign-stats">
+            ${[
+              { label:'Presupuesto', val: '$'+fmtNum(c.presupuesto) },
+              { label:'Gastado', val: '$'+fmtNum(c.gastado) },
+              { label:'ROAS', val: c.roas ? `<span style="color:${c.roas>=(c.roasEq||1.5)?'#10b981':'#ef4444'};font-weight:800;">${c.roas}x</span>` : '—' },
+              { label:'ROAS equilibrio', val: c.roasEq ? c.roasEq+'x' : '—' },
+              { label:'Impresiones', val: fmtNum(c.impresiones) },
+              { label:'Alcance', val: fmtNum(c.alcance) },
+              { label:'Clics', val: fmtNum(c.clics) },
+              { label:'CPC', val: c.cpc ? '$'+c.cpc : '—' },
+              { label:'CPM', val: c.cpm ? '$'+c.cpm : '—' },
+              { label:'CTR', val: c.ctr ? c.ctr+'%' : '—' },
+              { label:'Visitas destino', val: fmtNum(c.visitas) },
+              { label:'Conversiones', val: fmtNum(c.conversiones) },
+              { label:'Período', val: `${fmtDate(c.fechaInicio)} → ${fmtDate(c.fechaFin)}` },
+            ].map(s => `<div><div class="campaign-stat-label">${s.label}</div><div class="campaign-stat-val">${s.val||'—'}</div></div>`).join('')}
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:${Math.min(pct,100)}%;"></div></div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${pct}% del presupuesto ejecutado</div>
+        </div>
+      `;
+    }).join('')
+    : `<div class="empty-state"><i data-lucide="trending-up" style="width:40px;height:40px;color:#cbd5e1;stroke-width:1;margin-bottom:12px;"></i><h3>Sin campañas</h3><p>${activePautaTab==='todas'?'Agregá tu primera campaña.':'Sin campañas de '+activePautaTab+'.'}</p></div>`}
+
+    <div class="card" style="margin-top:16px;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;">
+      <div style="font-size:12px;color:#166534;line-height:1.6;">
+        <strong>Conectar automáticamente:</strong> Próximamente podrás sincronizar Meta Ads, Google Ads y TikTok Ads directamente desde el hub, sin cargar datos manualmente.
+        Por ahora cargá los datos de tu reporte de Ads Manager — el equipo COSMART puede ayudarte con esto.
+      </div>
+    </div>
+  `;
+
+  document.querySelectorAll('#pauta-tabs .tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activePautaTab = btn.dataset.tab;
+      renderPauta(document.getElementById('main-content'));
+      setTimeout(refreshIcons, 50);
+    });
+  });
+}
+
+// ──────────────────────────────────────────────────────
+// LINKS
+// ──────────────────────────────────────────────────────
+window.setLinkCatFilter = function(cat) {
+  window._linkCatFilter = cat;
+  renderLinks(document.getElementById('links-col-body'));
+  setTimeout(refreshIcons, 30);
+};
+
+function renderLinks(container) {
+  const links = STATE.links || [];
+  const cats = ['Todas', ...new Set(links.map(l => l.categoria).filter(Boolean))];
+  if (!window._linkCatFilter) window._linkCatFilter = 'Todas';
+  const filter = window._linkCatFilter;
+  const visible = filter === 'Todas' ? links : links.filter(l => l.categoria === filter);
+
+  container.innerHTML = `
+    ${cats.length > 1 ? `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
+      ${cats.map(c => `
+        <button onclick="setLinkCatFilter('${c.replace(/'/g,"\\'")}')"
+          style="padding:4px 12px;border-radius:999px;border:1.5px solid ${c===filter?'var(--primary)':'var(--border)'};
+          background:${c===filter?'var(--primary)':'transparent'};color:${c===filter?'#fff':'var(--text-muted)'};
+          font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;">${c}</button>
+      `).join('')}
+    </div>` : ''}
+    ${visible.length ? `
+      <div class="links-grid" id="links-sortable">
+        ${visible.map(l => `
+          <div class="link-card" draggable="true" data-link-id="${l.id}"
+            style="cursor:grab;user-select:none;"
+            onclick="if(!this._ldrag)window.open('${l.url.replace(/'/g,"\\'")}','_blank')"
+            ondragstart="this._ldrag=false;window._linkDragId='${l.id}';this.style.opacity='.4';"
+            ondragend="this._ldrag=true;this.style.opacity='1';setTimeout(()=>{this._ldrag=false},200);"
+            ondragover="event.preventDefault();this.style.outline='2px solid var(--primary)';"
+            ondragleave="this.style.outline='';"
+            ondrop="event.preventDefault();this.style.outline='';dropLinkOn('${l.id}');">
+            <div class="link-card-icon">
+              <i data-lucide="link" style="width:14px;height:14px;color:var(--primary);stroke-width:1.75;"></i>
+            </div>
+            <div style="flex:1;min-width:0;">
+              <div class="link-card-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${l.titulo}</div>
+              ${l.categoria ? `<div style="font-size:10px;color:var(--primary);font-weight:600;margin-top:1px;">${l.categoria}</div>` : ''}
+              ${l.desc ? `<div class="link-card-desc">${l.desc}</div>` : ''}
+              <div style="font-size:10px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${l.url}</div>
+            </div>
+            <button class="link-card-edit" onclick="event.stopPropagation();openLinkModal('${l.id}')" title="Editar">
+              <i data-lucide="pencil" style="width:13px;height:13px;stroke-width:2;"></i>
+            </button>
+          </div>
+        `).join('')}
+        <div class="link-card" onclick="openLinkModal(null)"
+          style="cursor:pointer;border-style:dashed;background:transparent;justify-content:center;opacity:.6;gap:6px;">
+          <i data-lucide="plus" style="width:14px;height:14px;stroke-width:2;color:var(--text-muted);"></i>
+          <span style="font-size:13px;color:var(--text-muted);">Agregar link</span>
+        </div>
+      </div>
+    ` : `
+      <div class="empty-state">
+        <i data-lucide="link" style="width:40px;height:40px;color:#cbd5e1;stroke-width:1;margin-bottom:12px;"></i>
+        <h3>Sin links${filter!=='Todas'?' en esta categoría':' guardados'}</h3>
+        <p>Guardá atajos rápidos a tus recursos: Drive, Canva, planillas, reportes...</p>
+        <button class="btn btn-primary" style="margin-top:12px;" onclick="openLinkModal(null)">+ Agregar primer link</button>
+      </div>
+    `}
+  `;
+  setTimeout(refreshIcons, 30);
+}
+
+window.dropLinkOn = async function(targetId) {
+  const dragId = window._linkDragId;
+  if (!dragId || dragId === targetId) return;
+  const links = STATE.links;
+  const fromIdx = links.findIndex(l => String(l.id) === String(dragId));
+  const toIdx   = links.findIndex(l => String(l.id) === String(targetId));
+  if (fromIdx < 0 || toIdx < 0) return;
+  const [moved] = links.splice(fromIdx, 1);
+  links.splice(toIdx, 0, moved);
+  STATE.home.links = links;
+  renderSection('links');
+  saveHomeData(clientId, STATE.home).catch(() => {});
+};
+
+let _editingLink = null;
+window.openLinkModal = function(id) {
+  _editingLink = id ? STATE.links.find(l => String(l.id) === String(id)) : null;
+  const l = _editingLink || {};
+  document.getElementById('link-modal-title').textContent = _editingLink ? 'Editar link' : 'Nuevo link';
+  document.getElementById('lf-titulo').value = l.titulo || '';
+  document.getElementById('lf-url').value = l.url || '';
+  document.getElementById('lf-desc').value = l.desc || '';
+  document.getElementById('lf-categoria').value = l.categoria || '';
+  const cats = [...new Set((STATE.links || []).map(x => x.categoria).filter(Boolean))];
+  const dl = document.getElementById('lf-cat-list');
+  if (dl) dl.innerHTML = cats.map(c => `<option value="${c}">`).join('');
+  document.getElementById('deleteLinkBtn').style.display = _editingLink ? '' : 'none';
+  document.getElementById('linkModal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('lf-titulo').focus(), 50);
+};
+
+// ──────────────────────────────────────────────────────
+// ARCHIVOS IMPORTANTES
+// ──────────────────────────────────────────────────────
+const ARCHIVO_ICONS = {
+  Drive: 'folder', Dropbox: 'box', PDF: 'file-text',
+  Documento: 'file', Planilla: 'table', Otro: 'link',
+};
+
+function tipoDesdeArchivo(filename) {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  if (ext === 'pdf') return 'PDF';
+  if (['doc', 'docx', 'txt', 'rtf'].includes(ext)) return 'Documento';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'Planilla';
+  return 'Otro';
+}
+
+// Carpetas -- un solo nivel (sin subcarpetas anidadas), a propósito: es
+// para "mayor organización" de una lista que se hace larga, no un
+// explorador de archivos completo. STATE.home.archivoCarpetas guarda los
+// NOMBRES (para que una carpeta pueda existir vacía); archivo.carpeta
+// guarda a cuál pertenece cada archivo ('' / null = raíz).
+let _archivoCarpetaActual = '';
+let _archivoBusqueda = '';
+
+function carpetasDisponibles() {
+  const set = new Set(STATE.home.archivoCarpetas || []);
+  (STATE.home.archivos || []).forEach(a => { if (a.carpeta) set.add(a.carpeta); });
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+function archivosToolbarHtml() {
+  return `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+      <input type="text" value="${_archivoBusqueda}" oninput="buscarArchivos(this.value)" placeholder="🔎 Buscar archivo..." class="form-control" style="flex:1;min-width:120px;font-size:12px;padding:5px 8px;">
+      ${!_archivoBusqueda ? `
+        <button class="btn btn-secondary btn-sm" onclick="crearCarpetaArchivo()" title="Nueva carpeta">📁+</button>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('af-folder-input').click()" title="Subir una carpeta entera de la compu, con todos los archivos que tenga adentro">📁⬆ Subir carpeta</button>
+      ` : ''}
+    </div>
+    ${!_archivoBusqueda && _archivoCarpetaActual ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">📁 ${_archivoCarpetaActual}</div>` : ''}
+    <div id="af-folder-status" style="font-size:12px;color:var(--primary);margin-bottom:8px;"></div>
+  `;
+}
+
+// Menú "⋮" tipo Windows -- mismas clases que .client-row-menu (ya usadas
+// en el panel admin para el menú de cada cliente), así no hace falta CSS
+// nuevo y se ve consistente con el resto del Hub.
+function archivoCardHtml(a) {
+  const abrir = a.subido ? `abrirArchivoSubido('${a.id}')` : `window.open('${(a.url || '').replace(/'/g, "\\'")}','_blank')`;
+  return `
+    <div class="link-card" onclick="${abrir}" style="cursor:pointer;">
+      <div class="link-card-icon">
+        <i data-lucide="${ARCHIVO_ICONS[a.tipo] || 'file'}" style="width:14px;height:14px;color:var(--primary);stroke-width:1.75;"></i>
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div class="link-card-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${a.titulo}</div>
+        <div style="font-size:10px;color:var(--primary);font-weight:600;margin-top:1px;">${a.tipo || 'Otro'}${a.subido ? ' · Subido' : ''}${_archivoBusqueda && a.carpeta ? ` · 📁 ${a.carpeta}` : ''}</div>
+        ${a.desc ? `<div class="link-card-desc">${a.desc}</div>` : ''}
+      </div>
+      <div class="client-row-menu-wrap" onclick="event.stopPropagation();" style="flex-shrink:0;">
+        <button class="client-row-menu-btn" onclick="toggleArchivoMenu('${a.id}', event)" title="Más opciones">⋮</button>
+        <div class="client-row-menu hidden" id="armenu-${a.id}">
+          <button onclick="toggleArchivoMenu('${a.id}');${abrir}">Abrir</button>
+          <button onclick="toggleArchivoMenu('${a.id}');openArchivoModal('${a.id}')">✏️ Editar</button>
+          <button onclick="moverArchivoModal('${a.id}')">📁 Mover a carpeta</button>
+          <button class="danger" onclick="eliminarArchivoDirecto('${a.id}')">🗑 Eliminar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderArchivos(container) {
+  const todos = STATE.home.archivos || [];
+
+  if (_archivoBusqueda) {
+    const encontrados = todos.filter(a =>
+      (a.titulo || '').toLowerCase().includes(_archivoBusqueda) || (a.desc || '').toLowerCase().includes(_archivoBusqueda));
+    container.innerHTML = archivosToolbarHtml() + (encontrados.length
+      ? `<div class="links-grid">${encontrados.map(archivoCardHtml).join('')}</div>`
+      : `<div class="empty-state"><p>Sin resultados para "${_archivoBusqueda}".</p></div>`);
+    setTimeout(refreshIcons, 30);
+    return;
+  }
+
+  const carpetas = carpetasDisponibles();
+  const enCarpetaActual = todos.filter(a => (a.carpeta || '') === _archivoCarpetaActual);
+  const enRaiz = !_archivoCarpetaActual;
+
+  if (!todos.length && !carpetas.length) {
+    container.innerHTML = archivosToolbarHtml() + `
+      <div class="empty-state">
+        <i data-lucide="folder-open" style="width:40px;height:40px;color:#cbd5e1;stroke-width:1;margin-bottom:12px;"></i>
+        <h3>Sin archivos guardados</h3>
+        <p>Subí un archivo directamente o pegá un link (Drive, Dropbox, etc.)</p>
+        <button class="btn btn-primary" style="margin-top:12px;" onclick="openArchivoModal(null)">+ Agregar primer archivo</button>
+      </div>`;
+    setTimeout(refreshIcons, 30);
+    return;
+  }
+
+  container.innerHTML = archivosToolbarHtml() + `
+    <div class="links-grid">
+      ${!enRaiz ? `
+        <div class="link-card" onclick="entrarCarpetaArchivo('')" style="cursor:pointer;justify-content:center;gap:6px;background:transparent;border-style:dashed;">
+          <span style="font-size:13px;color:var(--primary);font-weight:600;">⬅ Volver a la raíz</span>
+        </div>
+      ` : carpetas.map(c => {
+        const n = todos.filter(a => a.carpeta === c).length;
+        return `
+        <div class="link-card" onclick="entrarCarpetaArchivo('${c.replace(/'/g, "\\'")}')" style="cursor:pointer;">
+          <div class="link-card-icon" style="background:#FEF3C7;">
+            <i data-lucide="folder" style="width:14px;height:14px;color:#b45309;stroke-width:1.75;"></i>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div class="link-card-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c}</div>
+            <div style="font-size:10px;color:var(--text-muted);margin-top:1px;">${n} archivo${n !== 1 ? 's' : ''}</div>
+          </div>
+          <button onclick="event.stopPropagation();eliminarCarpetaArchivo('${c.replace(/'/g, "\\'")}')" title="Eliminar carpeta (solo si está vacía)" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:16px;flex-shrink:0;padding:0 2px;">×</button>
+        </div>`;
+      }).join('')}
+      ${enCarpetaActual.map(archivoCardHtml).join('')}
+      <div class="link-card" onclick="openArchivoModal(null)"
+        style="cursor:pointer;border-style:dashed;background:transparent;justify-content:center;opacity:.6;gap:6px;">
+        <i data-lucide="plus" style="width:14px;height:14px;stroke-width:2;color:var(--text-muted);"></i>
+        <span style="font-size:13px;color:var(--text-muted);">Agregar archivo</span>
+      </div>
+    </div>
+  `;
+  setTimeout(refreshIcons, 30);
+}
+
+window.buscarArchivos = function(valor) {
+  _archivoBusqueda = valor.trim().toLowerCase();
+  renderArchivos(document.getElementById('archivos-col-body'));
+};
+
+window.entrarCarpetaArchivo = function(nombre) {
+  _archivoCarpetaActual = nombre;
+  renderArchivos(document.getElementById('archivos-col-body'));
+};
+
+window.crearCarpetaArchivo = async function() {
+  const nombre = prompt('Nombre de la carpeta nueva:');
+  if (!nombre || !nombre.trim()) return;
+  const limpio = nombre.trim();
+  if (!STATE.home.archivoCarpetas) STATE.home.archivoCarpetas = [];
+  if (!STATE.home.archivoCarpetas.includes(limpio)) {
+    STATE.home.archivoCarpetas.push(limpio);
+    try { await saveHomeData(clientId, STATE.home); } catch (e) { alert('No se pudo crear la carpeta: ' + e.message); return; }
+  }
+  _archivoCarpetaActual = limpio;
+  renderArchivos(document.getElementById('archivos-col-body'));
+};
+
+window.eliminarCarpetaArchivo = async function(nombre) {
+  const enUso = (STATE.home.archivos || []).some(a => a.carpeta === nombre);
+  if (enUso) { alert('Esta carpeta tiene archivos adentro -- movélos o borralos primero.'); return; }
+  if (!confirm(`¿Eliminar la carpeta "${nombre}"?`)) return;
+  STATE.home.archivoCarpetas = (STATE.home.archivoCarpetas || []).filter(c => c !== nombre);
+  try { await saveHomeData(clientId, STATE.home); } catch (e) { alert('No se pudo eliminar: ' + e.message); return; }
+  renderArchivos(document.getElementById('archivos-col-body'));
+};
+
+window.moverArchivoModal = function(id) {
+  toggleArchivoMenu(id);
+  const a = (STATE.home.archivos || []).find(x => String(x.id) === String(id));
+  if (!a) return;
+  const opciones = ['(Raíz)', ...carpetasDisponibles()];
+  const eleccion = prompt(`¿A qué carpeta mover "${a.titulo}"?\n\nOpciones existentes: ${opciones.join(', ')}\n\nEscribí el nombre exacto (podés escribir uno nuevo), o "(Raíz)" para sacarlo de cualquier carpeta.`, a.carpeta || '(Raíz)');
+  if (eleccion === null) return;
+  const destino = eleccion.trim();
+  moverArchivoA(id, destino === '(Raíz)' || !destino ? '' : destino);
+};
+
+window.moverArchivoA = async function(id, carpeta) {
+  const a = (STATE.home.archivos || []).find(x => String(x.id) === String(id));
+  if (!a) return;
+  a.carpeta = carpeta || null;
+  if (carpeta) {
+    if (!STATE.home.archivoCarpetas) STATE.home.archivoCarpetas = [];
+    if (!STATE.home.archivoCarpetas.includes(carpeta)) STATE.home.archivoCarpetas.push(carpeta);
+  }
+  try { await saveHomeData(clientId, STATE.home); } catch (e) { alert('No se pudo mover: ' + e.message); return; }
+  renderArchivos(document.getElementById('archivos-col-body'));
+};
+
+window.eliminarArchivoDirecto = async function(id) {
+  const a = (STATE.home.archivos || []).find(x => String(x.id) === String(id));
+  if (!a || !confirm(`¿Eliminar "${a.titulo}"?`)) return;
+  STATE.home.archivos = (STATE.home.archivos || []).filter(x => String(x.id) !== String(id));
+  try { await saveHomeData(clientId, STATE.home); } catch (e) { alert('No se pudo eliminar: ' + e.message); return; }
+  renderArchivos(document.getElementById('archivos-col-body'));
+};
+
+window.toggleArchivoMenu = function(id, ev) {
+  if (ev) ev.stopPropagation();
+  document.querySelectorAll('.client-row-menu').forEach(m => { if (m.id !== `armenu-${id}`) m.classList.add('hidden'); });
+  const menu = document.getElementById(`armenu-${id}`);
+  if (!menu) return;
+  const abrir = menu.classList.contains('hidden');
+  menu.classList.toggle('hidden');
+  if (abrir && ev && ev.currentTarget) {
+    const rect = ev.currentTarget.getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 4}px`;
+    let left = rect.right - menu.offsetWidth;
+    if (left < 4) left = 4;
+    menu.style.left = `${left}px`;
+  }
+};
+document.addEventListener('click', () => {
+  document.querySelectorAll('.client-row-menu').forEach(m => m.classList.add('hidden'));
+});
+
+// Subir una carpeta entera de la compu (selector nativo de carpetas vía
+// webkitdirectory) -- como acá las carpetas son de un solo nivel, TODO lo
+// que traiga la carpeta elegida (subcarpetas incluidas) se aplana adentro
+// de una sola carpeta con el nombre de la carpeta raíz elegida.
+document.getElementById('af-folder-input')?.addEventListener('change', async (e) => {
+  const files = [...e.target.files].filter(f => !f.name.startsWith('.'));
+  e.target.value = '';
+  if (!files.length) return;
+  const folderName = (files[0].webkitRelativePath || files[0].name).split('/')[0] || 'Carpeta subida';
+  const statusEl = document.getElementById('af-folder-status');
+  if (!STATE.home.archivos) STATE.home.archivos = [];
+  if (!STATE.home.archivoCarpetas) STATE.home.archivoCarpetas = [];
+  if (!STATE.home.archivoCarpetas.includes(folderName)) STATE.home.archivoCarpetas.push(folderName);
+
+  let ok = 0, saltados = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (statusEl) statusEl.textContent = `Subiendo ${i + 1}/${files.length}: ${file.name}…`;
+    if (file.size > 50 * 1024 * 1024) { saltados++; continue; }
+    try {
+      const subido = await uploadArchivo(clientId, file);
+      STATE.home.archivos.push({
+        id: Date.now() + i, titulo: file.name, desc: '',
+        tipo: tipoDesdeArchivo(subido.filename), subido: true,
+        key: subido.key, filename: subido.filename, size: subido.size,
+        carpeta: folderName,
+      });
+      ok++;
+    } catch (err) { saltados++; }
+  }
+  if (statusEl) statusEl.textContent = 'Guardando...';
+  try {
+    await saveHomeData(clientId, STATE.home);
+  } catch (err) {
+    alert('Se subieron los archivos pero no se pudo guardar la lista: ' + err.message);
+  }
+  _archivoCarpetaActual = folderName;
+  _archivoBusqueda = '';
+  renderArchivos(document.getElementById('archivos-col-body'));
+  if (saltados) alert(`Se subieron ${ok} archivo${ok !== 1 ? 's' : ''}. ${saltados} se saltearon (pesan más de 50 MB o falló la subida).`);
+});
+
+window.abrirArchivoSubido = async function(id) {
+  const a = (STATE.home.archivos || []).find(x => String(x.id) === String(id));
+  if (!a) return;
+  try {
+    await abrirArchivo(clientId, a.key, a.filename);
+  } catch (e) {
+    alert('No se pudo abrir el archivo: ' + e.message);
+  }
+};
+
+let _editingArchivo = null;
+let _archivoModo = 'link';
+let _archivoFilePendiente = null;
+
+function setArchivoModo(modo) {
+  _archivoModo = modo;
+  document.getElementById('af-url-group').classList.toggle('hidden', modo !== 'link');
+  document.getElementById('af-file-group').classList.toggle('hidden', modo !== 'subir');
+  document.getElementById('af-modo-link').classList.toggle('btn-primary', modo === 'link');
+  document.getElementById('af-modo-link').classList.toggle('btn-secondary', modo !== 'link');
+  document.getElementById('af-modo-subir').classList.toggle('btn-primary', modo === 'subir');
+  document.getElementById('af-modo-subir').classList.toggle('btn-secondary', modo !== 'subir');
+}
+document.getElementById('af-modo-link').addEventListener('click', () => setArchivoModo('link'));
+document.getElementById('af-modo-subir').addEventListener('click', () => setArchivoModo('subir'));
+
+document.getElementById('af-file-input')?.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  document.getElementById('af-file-name').textContent = '';
+  _archivoFilePendiente = null;
+  if (!file) return;
+  if (file.size > 50 * 1024 * 1024) {
+    alert('El archivo supera los 50 MB. Para archivos más pesados usá "Pegar link" (Drive/Dropbox).');
+    e.target.value = '';
+    return;
+  }
+  _archivoFilePendiente = file;
+  document.getElementById('af-file-name').textContent = `✓ ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
+});
+
+window.openArchivoModal = function(id) {
+  _editingArchivo = id ? (STATE.home.archivos||[]).find(a => String(a.id) === String(id)) : null;
+  const a = _editingArchivo || {};
+  const esNuevo = !_editingArchivo;
+  const esSubido = !!a.subido;
+  document.getElementById('archivo-modal-title').textContent = _editingArchivo ? 'Editar archivo' : 'Nuevo archivo';
+  document.getElementById('af-titulo').value = a.titulo || '';
+  document.getElementById('af-url').value = a.url || '';
+  document.getElementById('af-tipo').value = a.tipo || 'Drive';
+  document.getElementById('af-desc').value = a.desc || '';
+  document.getElementById('af-file-input').value = '';
+  document.getElementById('af-file-name').textContent = '';
+  _archivoFilePendiente = null;
+  document.getElementById('af-modo-group').classList.toggle('hidden', !esNuevo);
+  setArchivoModo('link');
+  if (esSubido) document.getElementById('af-url-group').classList.add('hidden');
+  document.getElementById('deleteArchivoBtn').style.display = _editingArchivo ? '' : 'none';
+  document.getElementById('archivoModal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('af-titulo').focus(), 50);
+};
+
+function closeArchivoModal() { document.getElementById('archivoModal').classList.add('hidden'); }
+document.getElementById('closeArchivoModal').addEventListener('click', closeArchivoModal);
+document.getElementById('closeArchivoModal2').addEventListener('click', closeArchivoModal);
+document.getElementById('saveArchivoBtn').addEventListener('click', async () => {
+  const titulo = document.getElementById('af-titulo').value.trim();
+  if (!titulo) { alert('El título es obligatorio.'); return; }
+  if (!STATE.home.archivos) STATE.home.archivos = [];
+  const btn = document.getElementById('saveArchivoBtn');
+  const esNuevo = !_editingArchivo;
+  const modo = esNuevo ? _archivoModo : (_editingArchivo.subido ? 'subido' : 'link');
+  let obj;
+
+  if (modo === 'subir') {
+    if (!_archivoFilePendiente) { alert('Elegí un archivo para subir.'); return; }
+    btn.disabled = true; btn.textContent = 'Subiendo...';
+    try {
+      const subido = await uploadArchivo(clientId, _archivoFilePendiente);
+      obj = {
+        id: Date.now(), titulo, desc: document.getElementById('af-desc').value.trim(),
+        tipo: tipoDesdeArchivo(subido.filename), subido: true,
+        key: subido.key, filename: subido.filename, size: subido.size,
+        carpeta: _archivoCarpetaActual || null,
+      };
+      STATE.home.archivos.push(obj);
+    } catch (e) {
+      alert('Error al subir el archivo: ' + e.message);
+      btn.disabled = false; btn.textContent = 'Guardar';
+      return;
+    }
+  } else if (modo === 'subido') {
+    obj = { ..._editingArchivo, titulo, desc: document.getElementById('af-desc').value.trim(), tipo: document.getElementById('af-tipo').value };
+    const i = STATE.home.archivos.findIndex(a => a.id === obj.id);
+    STATE.home.archivos[i] = obj;
+  } else {
+    const url = document.getElementById('af-url').value.trim();
+    if (!url) { alert('La URL es obligatoria.'); return; }
+    obj = {
+      ...(_editingArchivo || {}), id: _editingArchivo?.id || Date.now(),
+      titulo, url, tipo: document.getElementById('af-tipo').value,
+      desc: document.getElementById('af-desc').value.trim(),
+      carpeta: _editingArchivo ? (_editingArchivo.carpeta || null) : (_archivoCarpetaActual || null),
+    };
+    if (_editingArchivo) {
+      const i = STATE.home.archivos.findIndex(a => a.id === obj.id);
+      STATE.home.archivos[i] = obj;
+    } else {
+      STATE.home.archivos.push(obj);
+    }
+  }
+
+  btn.disabled = true; btn.textContent = 'Guardando...';
+  try {
+    await saveHomeData(clientId, STATE.home);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Guardar';
+  }
+  closeArchivoModal();
+  renderArchivos(document.getElementById('archivos-col-body'));
+  setTimeout(refreshIcons, 50);
+});
+document.getElementById('deleteArchivoBtn').addEventListener('click', async () => {
+  if (!_editingArchivo || !confirm('¿Eliminar este archivo?')) return;
+  STATE.home.archivos = (STATE.home.archivos||[]).filter(a => a.id !== _editingArchivo.id);
+  await saveHomeData(clientId, STATE.home);
+  closeArchivoModal();
+  renderArchivos(document.getElementById('archivos-col-body'));
+  setTimeout(refreshIcons, 50);
+});
+
+// ──────────────────────────────────────────────────────
+// SITIO WEB
+// ──────────────────────────────────────────────────────
+const WEB_CATS = ['Contenido', 'Arreglo / Bug', 'Funcionalidad nueva', 'SEO / Métricas', 'Diseño', 'Otro'];
+const WEB_ESTADOS = ['Pendiente', 'En proceso', 'En revisión', 'Listo'];
+
+function renderWeb(container) {
+  const tasks = (STATE.home.webTareas || []);
+  const byEstado = WEB_ESTADOS.reduce((acc, e) => { acc[e] = tasks.filter(t => t.estado === e); return acc; }, {});
+  const colors = { 'Pendiente': '#94a3b8', 'En proceso': '#f59e0b', 'En revisión': '#ec4899', 'Listo': '#22c55e' };
+
+  container.innerHTML = `
+    <div style="margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <div style="font-size:13px;color:var(--text-muted);">${tasks.length} tareas · ${byEstado['Listo'].length} completadas</div>
+    </div>
+    <div class="kanban-board" id="kanban-web">
+      ${WEB_ESTADOS.map(estado => {
+        const items = byEstado[estado];
+        return `
+        <div class="kanban-col" data-col="${estado}" style="flex:1;max-width:none;">
+          <div class="kanban-col-header">
+            <span class="kanban-col-dot" style="background:${colors[estado]};"></span>
+            <span class="col-title">${estado}</span>
+            <span class="col-count">${items.length}</span>
+          </div>
+          <div class="kanban-cards" data-col="${estado}">
+            ${items.map(t => `
+              <div class="kanban-card" draggable="true" data-id="${t.id}" onclick="if(!this._dragged)openWebTaskModal('${t.id}')" ondragstart="this._dragged=true" ondragend="setTimeout(()=>{this._dragged=false},200)">
+                <div style="display:flex;align-items:flex-start;gap:6px;">
+                  <button onclick="event.stopPropagation();toggleWebTareaListo('${t.id}')" title="${t.estado === 'Listo' ? 'Marcar como no hecha' : 'Marcar como hecha'}" style="flex-shrink:0;width:16px;height:16px;border-radius:50%;border:2px solid ${t.estado === 'Listo' ? '#22c55e' : '#cbd5e1'};background:${t.estado === 'Listo' ? '#22c55e' : 'transparent'};color:#fff;font-size:10px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;">${t.estado === 'Listo' ? '✓' : ''}</button>
+                  <span style="font-size:10px;padding:2px 7px;border-radius:10px;background:#f1f5f9;color:var(--text-muted);font-weight:600;flex-shrink:0;">${t.categoria||'Otro'}</span>
+                </div>
+                <div class="kanban-card-title" style="margin-top:6px;${t.estado === 'Listo' ? 'text-decoration:line-through;color:var(--text-muted);' : ''}">${t.titulo}</div>
+                ${t.notas ? `<div class="kanban-card-notas" style="font-size:11px;color:var(--text-muted);margin-top:4px;">${t.notas}</div>` : ''}
+                ${t.url ? `<a href="${t.url}" target="_blank" onclick="event.stopPropagation();" style="font-size:11px;color:var(--accent);display:block;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">↗ ${t.url}</a>` : ''}
+                ${t.vencimiento ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">📅 ${fmtDate(t.vencimiento)}</div>` : ''}
+                ${t.asignado ? `<div style="font-size:10px;color:var(--primary);margin-top:4px;font-weight:600;">👤 ${escapeHtml(t.asignado.nombre || t.asignado.email)}</div>` : ''}
+                ${(t.subtareas || []).length ? `<div style="font-size:10px;color:var(--text-muted);margin-top:4px;">☑ ${t.subtareas.filter(s => s.done).length}/${t.subtareas.length} subtareas</div>` : ''}
+              </div>
+            `).join('')}
+            <button class="kanban-add-btn" onclick="openWebTaskModal(null,'${estado}')">+ Agregar</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+
+  initKanbanDrag('#kanban-web', tasks, async (id, newCol) => {
+    const t = (STATE.home.webTareas || []).find(x => String(x.id) === String(id));
+    if (!t || t.estado === newCol) return;
+    t.estado = newCol;
+    t.completadoEn = newCol === 'Listo' ? new Date().toISOString().split('T')[0] : null;
+    renderWeb(container);
+    await saveHomeData(clientId, STATE.home);
+    if (currentSection === 'home') renderSection('home');
+  });
+}
+
+window.toggleWebTareaListo = async function(id) {
+  const t = (STATE.home.webTareas || []).find(x => String(x.id) === String(id));
+  if (!t) return;
+  t.estado = t.estado === 'Listo' ? 'Pendiente' : 'Listo';
+  t.completadoEn = t.estado === 'Listo' ? new Date().toISOString().split('T')[0] : null;
+  await saveHomeData(clientId, STATE.home);
+  renderWeb(document.getElementById('main-content'));
+  if (currentSection === 'home') renderSection('home');
+};
+
+let _editingWebTask = null;
+let _wtSubtareas = [];
+window.openWebTaskModal = function(id, defaultEstado) {
+  _editingWebTask = id ? (STATE.home.webTareas||[]).find(t => String(t.id) === String(id)) : null;
+  const t = _editingWebTask || {};
+  document.getElementById('wt-titulo').value = t.titulo || '';
+  document.getElementById('wt-categoria').value = t.categoria || 'Contenido';
+  document.getElementById('wt-estado').value = t.estado || defaultEstado || 'Pendiente';
+  document.getElementById('wt-vencimiento').value = t.vencimiento || '';
+  document.getElementById('wt-url').value = t.url || '';
+  document.getElementById('wt-notas').value = t.notas || '';
+  const wtAsignado = document.getElementById('wt-asignado');
+  if (wtAsignado) wtAsignado.innerHTML = getAsignarOptions(t.asignado?.email || '');
+  _wtSubtareas = t.subtareas ? [...t.subtareas] : [];
+  renderWtSubtareas();
+  document.getElementById('wt-subtarea-input').value = '';
+  _wtImgList = (t.imagenes || []).map(item => typeof item === 'string' ? { src: item } : { ...item });
+  renderWtImgThumbs();
+  document.getElementById('deleteWebTaskBtn').style.display = _editingWebTask ? '' : 'none';
+  document.getElementById('webTaskModal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('wt-titulo').focus(), 50);
+};
+
+// ── Subtareas de Tarea de Sitio Web -- versión simple (sin asignación
+// individual ni autoguardado por click, a diferencia de las subtareas de
+// Tareas normales): esto vive en STATE.home.webTareas, que se guarda
+// entero recién al tocar "Guardar", no tiene su propio endpoint.
+function renderWtSubtareas() {
+  const list = document.getElementById('wt-subtareas-list');
+  if (!list) return;
+  list.innerHTML = _wtSubtareas.map((s, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:${s.done ? '#f0fdf4' : '#f8fafc'};border-radius:6px;border:1px solid ${s.done ? '#bbf7d0' : 'var(--border)'};">
+      <input type="checkbox" ${s.done ? 'checked' : ''} onchange="toggleSubtareaWt(${i})" style="flex-shrink:0;">
+      <span style="flex:1;font-size:13px;word-break:break-word;${s.done ? 'text-decoration:line-through;color:var(--text-muted);' : ''}">${escapeHtml(s.titulo)}</span>
+      <button type="button" onclick="deleteSubtareaWt(${i})" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:16px;padding:0 2px;flex-shrink:0;" title="Eliminar">×</button>
+    </div>
+  `).join('') || '<p style="font-size:12px;color:var(--text-muted);">Sin subtareas. Agregá una.</p>';
+}
+
+window.agregarSubtareaWt = function() {
+  const input = document.getElementById('wt-subtarea-input');
+  const titulo = input.value.trim();
+  if (!titulo) return;
+  _wtSubtareas.push({ titulo, done: false });
+  renderWtSubtareas();
+  input.value = '';
+  input.focus();
+};
+
+window.toggleSubtareaWt = function(i) {
+  if (!_wtSubtareas[i]) return;
+  _wtSubtareas[i].done = !_wtSubtareas[i].done;
+  renderWtSubtareas();
+};
+
+window.deleteSubtareaWt = function(i) {
+  _wtSubtareas.splice(i, 1);
+  renderWtSubtareas();
+};
+
+// ── Imágenes adjuntas de Tarea de Sitio Web -- mismo mecanismo que
+// Tareas normales (subida a R2 al toque, ver comentario en
+// renderTareaImgThumbs), copiado acá porque webTareas es un objeto
+// separado de STATE.tareas.
+let _wtImgList = [];
+
+function renderWtImgThumbs() {
+  const container = document.getElementById('wt-img-thumbs');
+  if (!container) return;
+  container.innerHTML = _wtImgList.map((item, i) => {
+    if (item.subiendo) {
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f8fafc;border:1px solid var(--border);border-radius:6px;font-size:12.5px;color:var(--text-muted);"><i data-lucide="loader" style="width:14px;height:14px;flex-shrink:0;"></i>Subiendo…</div>`;
+    }
+    const nombre = item.filename || `Imagen ${i + 1}`;
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f8fafc;border:1px solid var(--border);border-radius:6px;">
+      <i data-lucide="image" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;stroke-width:1.75;"></i>
+      <span class="wt-img-thumb" data-idx="${i}" style="flex:1;font-size:12.5px;cursor:pointer;color:var(--primary);text-decoration:underline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(nombre)}</span>
+      <button type="button" data-idx="${i}" class="wt-img-remove" style="background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:15px;padding:0 2px;flex-shrink:0;" title="Quitar">×</button>
+    </div>`;
+  }).join('');
+  setTimeout(refreshIcons, 30);
+  _wtImgList.forEach(async (item, i) => {
+    if (item.subiendo || item.src || !item.key) return;
+    try {
+      item.src = _imgBlobUrlCache.get(item.key) || await getArchivoBlobUrl(clientId, item.key);
+      _imgBlobUrlCache.set(item.key, item.src);
+      renderWtImgThumbs();
+    } catch (e) {}
+  });
+}
+
+document.getElementById('wt-img-thumbs')?.addEventListener('click', (e) => {
+  const removeBtn = e.target.closest('.wt-img-remove');
+  if (removeBtn) { _wtImgList.splice(Number(removeBtn.dataset.idx), 1); renderWtImgThumbs(); return; }
+  const thumb = e.target.closest('.wt-img-thumb');
+  if (thumb) {
+    const item = _wtImgList[Number(thumb.dataset.idx)];
+    if (item?.src) ampliarImagen(item.src);
+  }
+});
+
+function serializarImagenesWt(list) {
+  return list.filter(item => !item.subiendo).map(item =>
+    item.key ? { key: item.key, filename: item.filename, size: item.size } : { src: item.src }
+  );
+}
+
+async function addWtImgFromFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  if (_wtImgList.length >= 3) { alert('Máximo 3 imágenes por tarea.'); return; }
+  if (file.size > 15 * 1024 * 1024) { alert('La imagen supera 15 MB. Subíla a Drive y pegá el link.'); return; }
+  const placeholder = { subiendo: true };
+  _wtImgList.push(placeholder);
+  renderWtImgThumbs();
+  try {
+    const subido = await uploadArchivo(clientId, file);
+    const idx = _wtImgList.indexOf(placeholder);
+    if (idx === -1) return;
+    _wtImgList[idx] = { key: subido.key, filename: subido.filename, size: subido.size };
+    renderWtImgThumbs();
+  } catch (err) {
+    _wtImgList.splice(_wtImgList.indexOf(placeholder), 1);
+    renderWtImgThumbs();
+    alert('No se pudo subir la imagen: ' + (err.message || 'reintentá.'));
+  }
+}
+
+document.getElementById('wt-img-input')?.addEventListener('change', (e) => {
+  [...e.target.files].forEach(addWtImgFromFile);
+  e.target.value = '';
+});
+
+// ──────────────────────────────────────────────────────
+// INSTRUCCIONES
+// ──────────────────────────────────────────────────────
+function _renderInstruccionesViejo(container) {
+  container.innerHTML = `
+    <div style="max-width:780px;">
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header"><h2 style="font-family:'Playfair Display',serif;">🧭 Bienvenido al Marketing Hub de COSMART</h2></div>
+        <div class="card-body" style="line-height:1.8;font-size:14px;color:var(--text-muted);">
+          <p>Este es tu panel de control digital. Desde acá podés gestionar todos los aspectos de tu estrategia de marketing en un solo lugar.</p>
+          <p>Desde el navegador del celu podés instalarlo como una app (Safari/Chrome → "Agregar a inicio"), y elegir modo claro u oscuro con el botón de abajo de todo en la barra lateral.</p>
+          <button class="btn btn-secondary btn-sm" onclick="reiniciarTourCliente()">Ver recorrido guiado de nuevo</button>
+        </div>
+      </div>
+
+      ${[
+        { icon:'bell', title:'Notificaciones', color:'#E02020', items:[
+          'La campanita (arriba a la derecha) avisa de asignaciones, menciones y otros movimientos, sin tener que revisar el mail.',
+          'Tocala para ver el listado completo. Desde ahí podés marcar como leída/no leída, cambiar el estado de la tarea o contenido directamente, o tocar el relojito para que vuelva a aparecer recién en tu próximo inicio de sesión.',
+        ]},
+        { icon:'bar-chart-2', title:'Dashboard Editorial', color:'#8b5cf6', items:[
+          'Mostrá el resumen mensual: frecuencia por semana, formatos, ejes y tipos de contenido.',
+          'Navegá entre meses con las flechas. Se actualiza solo con los contenidos cargados.',
+          'Usalo para presentar avances a clientes o gerencia.',
+        ]},
+        { icon:'pen-line', title:'Contenidos', color:'#3b82f6', items:[
+          '<strong>Banco de contenidos:</strong> Tabla con todos los posts. Podés editar desde acá. Se puede filtrar por plataforma y por rango de fechas (Desde/Hasta), además del filtro Orgánico/Pauta.',
+          '<strong>Calendario:</strong> Vista mensual. Tocá el "+" de un día para agregar contenido.',
+          '<strong>Estados (Kanban):</strong> Arrastrá los contenidos entre Idea → En proceso → Aprobado → Publicado.',
+          '<strong>Feed IG:</strong> "Publicado" muestra el feed real; "Borrador (pendiente de aprobación)" es una grilla de 12 casilleros en formato 4:5 donde podés arrastrar imágenes, vincular un contenido ya cargado, o armar una portada de texto con su propio color mientras no haya material -- más la pestaña "Ver como Reel" para lo que marques como tal.',
+          '<strong>Muro FB / Stories:</strong> Vista previa del perfil con filtros por estado. Tocá ✏️ para editar.',
+          '<strong>Banco de ideas:</strong> Guardá ideas y convertílas en contenido con un clic.',
+          '<strong>+ Nuevo contenido:</strong> Completá plataformas, formato, dimensión, copy, pieza terminada y material. Podés pegar imágenes con Ctrl+V.',
+          '<strong>¿Es contenido para pauta?</strong> Marcá si es dark post u orgánico; si va a pauta te lleva a campañas.',
+          '<strong>🎬 Guion + Teleprompter:</strong> cada contenido tiene su propio campo de guion. Con el botón "📺 Abrir teleprompter" se abre a pantalla completa, fondo negro y letras blancas, con auto-scroll a velocidad ajustable, tamaño de letra y modo espejado -- pensado para leerlo cómodo mientras grabás. El botón "⛶ Pantalla completa" lo expande a todo el monitor, sin la barra del navegador.',
+          '<strong>📥 Importar Excel:</strong> subí un calendario armado con la plantilla base y se cargan todos los contenidos de una — no hace falta tipearlos uno por uno. Las columnas "Guion" y "Asignado a" (nombre o email del contacto del cliente o de alguien del equipo) también se pueden completar ahí en vez de contenido por contenido.',
+          '<strong>📤 Exportar Excel:</strong> bajá el calendario ya cargado con las mismas columnas de la plantilla -- para hacer una modificación masiva afuera y volver a importarlo.',
+          '<strong>🧹 Duplicados</strong> (equipo de la agencia): agrupa los contenidos que tienen el mismo título para poder revisarlos y borrar los que quedaron cargados dos veces.',
+          '<strong>⚡ Actualizar estado/notas</strong> (equipo de la agencia): para actualizar varios contenidos ya cargados sin abrir uno por uno -- un Excel simple con columnas Título, Estado, Notas internas, Link pieza terminada y/o Comentario. Solo toca las columnas que completes; el resto del contenido queda intacto. Si escribís @Nombre en Comentario, manda el aviso por mail como cualquier mención.',
+          '<strong>🔗 Copiar link:</strong> dentro de cada contenido hay un botón para copiar un link directo a esa tarjeta puntual -- ideal para mandarlo por WhatsApp y que lo encuentren con un clic.',
+        ]},
+        { icon:'clapperboard', title:'Guiones', color:'#f97316', items:[
+          'Repositorio propio de guiones, separado de Contenidos -- pensado para cargar de una varios guiones sueltos (ej. grabar 60 videos juntos) sin tener que crear cada contenido primero.',
+          '<strong>+ Nuevo guion:</strong> título + texto, y opcionalmente "Vincular a un contenido" ya cargado. Si más adelante creás un contenido con el MISMO título, se vincula solo.',
+          '<strong>📥 Traer desde un contenido:</strong> copia al repositorio el guion que ya esté escrito adentro de un contenido existente (dirección inversa).',
+          '<strong>📺 Teleprompter</strong> disponible por guion, igual que en Contenidos: pantalla completa, fondo negro, letras blancas, auto-scroll.',
+          'Se pueden <strong>archivar</strong> (🗄) para sacarlos de la vista activa sin borrarlos, y se listan agrupados por mes y día.',
+        ]},
+        { icon:'list-checks', title:'Tareas', color:'#10b981', items:[
+          'Organizadas en tres columnas: <strong>Sin empezar → En progreso → Listo</strong>.',
+          'El <strong>To-do del Home</strong> y las Tareas están sincronizados: lo que agregás en uno aparece en el otro.',
+          'Cada tarea puede tener <strong>subtareas</strong>, fecha de vencimiento, prioridad y enlace.',
+          'Podés agregar <strong>recurrencia</strong>: diaria, semanal, quincenal, mensual o días específicos -- al completarse, la anterior queda como historial ("Lista", con su propia fecha) y se genera la próxima aparte.',
+          'Podés <strong>archivar</strong> tareas completadas para mantener el tablero limpio.',
+          '<strong>🔗 Copiar link:</strong> mismo botón que en Contenidos, para compartir una tarea puntual por WhatsApp.',
+        ]},
+        { icon:'trending-up', title:'Pauta Digital', color:'#f59e0b', items:[
+          'Registrá tus campañas de Meta Ads, Google Ads, TikTok Ads o LinkedIn Ads.',
+          'El <strong>ROAS</strong> se calcula automáticamente (Ingresos ÷ Gastado).',
+          'Definí tu <strong>ROAS de equilibrio</strong> para saber si la campaña es rentable.',
+          'La barra de progreso muestra el % del presupuesto ejecutado.',
+          '<strong>📥 Importar Excel:</strong> subí varias campañas de una desde una planilla, sin cargarlas a mano.',
+        ]},
+        { icon:'file-text', title:'Reporte Ejecutivo', color:'#e02020', items:[
+          'Generá un reporte mensual para presentar a gerencia: contenidos publicados, métricas, campañas e insights.',
+          'Accedé desde el botón "📊 Reporte" en la sección Contenidos.',
+          'Podés imprimir o guardar como PDF con Ctrl+P.',
+          'No confundir con "Reportes" (más abajo): esto se genera solo, al toque, con los datos ya cargados en el Hub.',
+        ]},
+        { icon:'bar-chart-2', title:'Reportes', color:'#16a34a', items:[
+          'Reportes de resultados armados afuera (ej. un análisis con gráficos exportado a HTML) que tu agencia sube mes a mes.',
+          'Navegá entre meses anteriores desde acá mismo, sin que te lo tengan que volver a mandar por mail. Los meses marcados con 📈 son el resumen mensual automático de tu agencia (el mismo que te llega por mail al aprobarlo).',
+          'Botón "⬇️ Descargar" para guardarte el reporte del mes que estés viendo como archivo, listo para reenviar o presentar.',
+        ]},
+        { icon:'folder-open', title:'Archivos importantes', color:'#7c3aed', items:[
+          'Guardá los documentos clave del cliente: contratos, briefings, manuales de marca, carpetas de Drive/Dropbox.',
+          'Cada archivo es un link con título, tipo (Drive, Dropbox, PDF, Documento, Planilla u Otro) y descripción opcional.',
+        ]},
+        { icon:'link', title:'Links', color:'#0d9488', items:[
+          'Guardá atajos rápidos a tus recursos: Drive, Canva, planillas, reportes, portales.',
+          'Tocá "+ Nuevo link" o el botón "+" en la grilla para agregar uno.',
+          'Tocá el ✏️ sobre un link para editarlo o eliminarlo.',
+          'El botón <strong>"Contactos"</strong> (abajo a la derecha, misma sección) abre el equipo del cliente -- nombre, teléfono, email, rol y redes de las personas clave, con lo que ya cargaste antes.',
+        ]},
+        { icon:'globe', title:'Sitio Web', color:'#64748b', items:[
+          'Gestioná tareas y mejoras del sitio web del cliente.',
+          'Podés cargar tareas del tipo: contenidos, arreglos, agregados o análisis.',
+          'Las tareas del sitio web están separadas de las tareas de marketing pero usan la misma interfaz.',
+          'Cada tarea también se puede <strong>asignar</strong> a un colaborador o al cliente, dividir en <strong>subtareas</strong>, y llevar <strong>imágenes adjuntas</strong> (pegadas con Ctrl+V o subidas) además del link de referencia.',
+        ]},
+        { icon:'map-pin', title:'Google Drive', color:'#ec4899', items:[
+          'Usamos Google Drive para almacenar las piezas gráficas y videos.',
+          '<strong>Pieza terminada:</strong> el archivo listo para publicar (podés agregar múltiples links).',
+          '<strong>Material de referencia:</strong> fotos brutas, referencias, brief visual.',
+          'Para linkear: abrí el archivo en Drive → botón derecho → "Copiar link" → pegalo en el campo.',
+        ]},
+      ].map(s => `
+        <div class="card" style="margin-bottom:12px;">
+          <div class="card-header">
+            <i data-lucide="${s.icon}" style="width:16px;height:16px;color:${s.color};stroke-width:1.75;flex-shrink:0;"></i>
+            <h2 style="font-family:'Playfair Display',serif;">${s.title}</h2>
+          </div>
+          <div class="card-body">
+            <ul style="list-style:none;padding:0;display:flex;flex-direction:column;gap:8px;">
+              ${s.items.map(item=>`<li style="font-size:13px;color:var(--text-muted);padding-left:16px;position:relative;line-height:1.6;"><span style="position:absolute;left:0;color:${s.color};">›</span>${item}</li>`).join('')}
+            </ul>
+          </div>
+        </div>
+      `).join('')}
+
+      <div class="card" style="border:1px solid #bfdbfe;background:#eff6ff;">
+        <div class="card-body" style="font-size:13px;color:#1d4ed8;line-height:1.7;">
+          <strong>¿Tenés dudas?</strong> Contactá a tu equipo COSMART en <a href="mailto:info@cosmart.com.ar" style="color:#1d4ed8;">info@cosmart.com.ar</a>.
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ──────────────────────────────────────────────────────
+// REPORTE EJECUTIVO
+// ──────────────────────────────────────────────────────
+window.openReporteModal = function() {
+  const hoy = new Date();
+  const mesActual = hoy.toISOString().slice(0, 7);
+  const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const mesLabel = `${MESES[hoy.getMonth()]} ${hoy.getFullYear()}`;
+  const cliente = STATE.client.nombre || STATE.client.name || clientId;
+
+  const conts = STATE.contenidos.filter(c => c.fechaPub && c.fechaPub.startsWith(mesActual));
+  const publicados = conts.filter(c => c.estado === 'Publicado');
+  const aprobados = conts.filter(c => c.estado === 'Aprobado');
+  const campanas = STATE.campanas || [];
+  const activas = campanas.filter(c => c.estado === 'Activa');
+  const finalizadas = campanas.filter(c => c.estado === 'Finalizada');
+
+  // Formato breakdown
+  const fmtCount = {};
+  conts.forEach(c => {
+    const fmts = Array.isArray(c.formato) ? c.formato : (c.formato ? [c.formato] : []);
+    fmts.forEach(f => { fmtCount[f] = (fmtCount[f]||0)+1; });
+  });
+
+  // Eje breakdown
+  const ejeCount = {};
+  conts.forEach(c => { if(c.eje) ejeCount[c.eje] = (ejeCount[c.eje]||0)+1; });
+
+  // Métricas pauta
+  const totalPresup = campanas.reduce((s,c)=>s+(c.presupuesto||0),0);
+  const totalGastado = campanas.reduce((s,c)=>s+(c.gastado||0),0);
+  const totalIngresos = campanas.reduce((s,c)=>s+(c.ingresos||0),0);
+  const roasTotal = totalGastado ? (totalIngresos/totalGastado).toFixed(2) : '—';
+
+  // Tareas del mes
+  const tareasReporte = tareasVisibles(STATE.tareas);
+  const tareasPend = tareasReporte.filter(t => !t.archivado && t.estado !== 'Listo').length;
+  const tareasOk = tareasReporte.filter(t => t.estado === 'Listo').length;
+
+  // Insights automáticos
+  const insights = [];
+  if (publicados.length < 8) insights.push('📉 Menos de 8 contenidos publicados este mes. Considerá aumentar la frecuencia.');
+  if (conts.filter(c=>c.eje==='Comercial').length === 0) insights.push('💡 No hay contenido comercial este mes. Incluir al menos 1-2 posts de conversión.');
+  if (conts.filter(c=>(c.plataformas||[]).includes('TikTok')).length === 0) insights.push('📱 Sin contenido para TikTok este mes.');
+  if (activas.length && totalGastado && parseFloat(roasTotal) < 2) insights.push(`⚠️ ROAS de ${roasTotal} por debajo del umbral recomendado (2x). Revisar segmentación.`);
+  if (tareasPend > 5) insights.push(`📋 Hay ${tareasPend} tareas pendientes. Priorizar para no acumular deuda operativa.`);
+  if (!insights.length) insights.push('✅ Todo en orden. Excelente desempeño este mes.');
+
+  const body = document.getElementById('reporte-body');
+  body.innerHTML = `
+    <div style="font-family:'DM Sans',sans-serif;" id="reporte-print-content">
+      <div style="text-align:center;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid var(--primary);">
+        <div style="font-size:11px;font-weight:700;letter-spacing:2px;color:var(--accent);text-transform:uppercase;">Reporte Ejecutivo</div>
+        <div style="font-family:'Playfair Display',serif;font-size:24px;font-weight:700;color:var(--primary-dark);margin:4px 0;">${cliente}</div>
+        <div style="font-size:13px;color:var(--text-muted);">${mesLabel} · Generado el ${hoy.toLocaleDateString('es-AR')}</div>
+      </div>
+
+      <!-- Stats resumen -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;">
+        ${[
+          {label:'Contenidos del mes', val:conts.length, color:'var(--primary)'},
+          {label:'Publicados', val:publicados.length, color:'#22c55e'},
+          {label:'Aprobados / listos', val:aprobados.length, color:'#3b82f6'},
+          {label:'Campañas activas', val:activas.length, color:'#f59e0b'},
+        ].map(s=>`
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;">
+            <div style="font-size:26px;font-weight:700;color:${s.color};">${s.val}</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${s.label}</div>
+          </div>`).join('')}
+      </div>
+
+      <!-- Contenidos -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px;">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px;">Contenidos del mes</div>
+        ${conts.length ? `
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr style="background:#f8fafc;">${['Título','Fecha','Plataformas','Formato','Estado'].map(h=>`<th style="text-align:left;padding:6px 8px;font-weight:600;border-bottom:1px solid var(--border);">${h}</th>`).join('')}</tr></thead>
+          <tbody>${conts.map(c=>`
+            <tr style="border-bottom:1px solid #f1f5f9;">
+              <td style="padding:6px 8px;font-weight:500;">${c.titulo}</td>
+              <td style="padding:6px 8px;color:var(--text-muted);">${fmtDate(c.fechaPub)||'—'}</td>
+              <td style="padding:6px 8px;">${(c.plataformas||[]).join(', ')||'—'}</td>
+              <td style="padding:6px 8px;">${Array.isArray(c.formato)?c.formato.join(', '):(c.formato||'—')}</td>
+              <td style="padding:6px 8px;">${c.estado||'—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>` : '<p style="color:var(--text-muted);font-size:13px;">Sin contenidos este mes.</p>'}
+      </div>
+
+      <!-- Distribución -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;">
+          <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:10px;">Por Formato</div>
+          ${Object.entries(fmtCount).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+              <div style="flex:1;font-size:12px;">${k}</div>
+              <div style="width:80px;background:#f1f5f9;border-radius:20px;height:6px;overflow:hidden;"><div style="width:${Math.round(v/conts.length*100)}%;background:var(--accent);height:6px;border-radius:20px;"></div></div>
+              <div style="font-size:12px;font-weight:700;color:var(--primary);min-width:20px;">${v}</div>
+            </div>`).join('') || '<p style="font-size:12px;color:var(--text-muted);">Sin datos</p>'}
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;">
+          <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:10px;">Por Eje de Comunicación</div>
+          ${Object.entries(ejeCount).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+              <div style="flex:1;font-size:12px;">${k}</div>
+              <div style="width:80px;background:#f1f5f9;border-radius:20px;height:6px;overflow:hidden;"><div style="width:${Math.round(v/conts.length*100)}%;background:var(--primary);height:6px;border-radius:20px;"></div></div>
+              <div style="font-size:12px;font-weight:700;color:var(--primary);min-width:20px;">${v}</div>
+            </div>`).join('') || '<p style="font-size:12px;color:var(--text-muted);">Sin datos</p>'}
+        </div>
+      </div>
+
+      <!-- Campañas -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px;">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px;">Campañas de Pauta</div>
+        ${campanas.length ? `
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr style="background:#f8fafc;">${['Campaña','Plataforma','Estado','Presup.','Gastado','ROAS'].map(h=>`<th style="text-align:left;padding:6px 8px;font-weight:600;border-bottom:1px solid var(--border);">${h}</th>`).join('')}</tr></thead>
+          <tbody>${campanas.map(c=>{
+            const roas = c.gastado ? (c.ingresos/c.gastado).toFixed(2) : '—';
+            return `<tr style="border-bottom:1px solid #f1f5f9;">
+              <td style="padding:6px 8px;font-weight:500;">${c.nombre}</td>
+              <td style="padding:6px 8px;color:var(--text-muted);">${c.plataforma||'—'}</td>
+              <td style="padding:6px 8px;"><span style="padding:2px 8px;border-radius:10px;background:${c.estado==='Activa'?'#dcfce7':'#f1f5f9'};color:${c.estado==='Activa'?'#16a34a':'#64748b'};font-size:11px;font-weight:600;">${c.estado||'—'}</span></td>
+              <td style="padding:6px 8px;">$${fmtNum(c.presupuesto)}</td>
+              <td style="padding:6px 8px;">$${fmtNum(c.gastado)}</td>
+              <td style="padding:6px 8px;font-weight:700;color:${parseFloat(roas)>=2?'#16a34a':'#dc2626'}">${roas}x</td>
+            </tr>`;}).join('')}
+            <tr style="background:#f8fafc;font-weight:700;">
+              <td colspan="3" style="padding:6px 8px;">TOTALES</td>
+              <td style="padding:6px 8px;">$${fmtNum(totalPresup)}</td>
+              <td style="padding:6px 8px;">$${fmtNum(totalGastado)}</td>
+              <td style="padding:6px 8px;color:${parseFloat(roasTotal)>=2?'#16a34a':'#dc2626'}">${roasTotal}x</td>
+            </tr>
+          </tbody>
+        </table>` : '<p style="color:var(--text-muted);font-size:13px;">Sin campañas registradas.</p>'}
+      </div>
+
+      <!-- Insights -->
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:16px;">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b45309;margin-bottom:10px;">💡 Insights y Sugerencias</div>
+        <ul style="list-style:none;padding:0;display:flex;flex-direction:column;gap:8px;">
+          ${insights.map(i=>`<li style="font-size:13px;color:#78350f;line-height:1.5;">${i}</li>`).join('')}
+        </ul>
+      </div>
+    </div>
+  `;
+
+  // Botón ▶ con la explicación del reporte (js/play.js, sin IA ni costo).
+  montarPlay(body, armarNarracionReporte({
+    cliente, mes: mesLabel, total: conts.length, publicados: publicados.length, aprobados: aprobados.length,
+    formatos: fmtCount, ejes: ejeCount, campActivas: activas.length,
+    gastado: totalGastado, ingresos: totalIngresos, tareasPend, tareasOk
+  }, (user.agencyId || 'cosmart') === 'cosmart' ? 'viaje' : 'neutro'), { etiqueta: `Reporte de ${mesLabel}` });
+
+  document.getElementById('reporteModal').classList.remove('hidden');
+};
+
+document.getElementById('closeReporteModal').addEventListener('click', () => { detenerPlay(); document.getElementById('reporteModal').classList.add('hidden'); });
+document.getElementById('closeReporteModal2').addEventListener('click', () => { detenerPlay(); document.getElementById('reporteModal').classList.add('hidden'); });
+
+window.openCampanaModal = function(id) {
+  editingCampana = id ? STATE.campanas.find(c => c.id === id) : null;
+  const c = editingCampana || {};
+  document.getElementById('campana-modal-title').textContent = editingCampana ? 'Editar campaña' : 'Nueva campaña';
+  document.getElementById('pf-nombre').value = c.nombre||'';
+  document.getElementById('pf-plataforma').value = c.plataforma||'Meta Ads';
+  // Pedido de Vaneh (07/09): subir una campaña no significa que ya esté
+  // "cargada" con datos reales -- por eso una campaña nueva arranca en
+  // Borrador, no Activa, y así no aparece en "Trabajo realizado" hasta
+  // que ella misma le cambie el estado una vez que cargó todo.
+  document.getElementById('pf-estado').value = c.estado || (editingCampana ? 'Activa' : 'Borrador');
+  const pfAsignado = document.getElementById('pf-asignado');
+  if (pfAsignado) pfAsignado.innerHTML = getAsignarOptions(c.asignado?.email || '');
+  document.getElementById('pf-presupuesto').value = c.presupuesto||'';
+  document.getElementById('pf-gastado').value = c.gastado||'';
+  document.getElementById('pf-inicio').value = c.fechaInicio||'';
+  document.getElementById('pf-fin').value = c.fechaFin||'';
+  document.getElementById('pf-impresiones').value = c.impresiones||'';
+  document.getElementById('pf-alcance').value = c.alcance||'';
+  document.getElementById('pf-clics').value = c.clics||'';
+  document.getElementById('pf-cpm').value = c.cpm||'';
+  document.getElementById('pf-cpc').value = c.cpc||'';
+  document.getElementById('pf-ctr').value = c.ctr||'';
+  document.getElementById('pf-visitas').value = c.visitas||'';
+  document.getElementById('pf-conversiones').value = c.conversiones||'';
+  document.getElementById('pf-ingresos').value = c.ingresos||'';
+  document.getElementById('pf-roas-eq').value = c.roasEq||'';
+  const roas = c.gastado ? ((c.ingresos||0) / c.gastado).toFixed(2) : '';
+  document.getElementById('pf-roas').value = roas;
+  document.getElementById('deleteCampanaBtn').style.display = editingCampana ? '' : 'none';
+  document.getElementById('campanaModal').classList.remove('hidden');
+};
+
+function closeCampanaModal() { document.getElementById('campanaModal').classList.add('hidden'); }
+document.getElementById('closeCampanaModal').addEventListener('click', closeCampanaModal);
+document.getElementById('closeCampanaModal2').addEventListener('click', closeCampanaModal);
+
+function recalcRoas() {
+  const gastado = +document.getElementById('pf-gastado').value||0;
+  const ingresos = +document.getElementById('pf-ingresos').value||0;
+  document.getElementById('pf-roas').value = gastado ? (ingresos/gastado).toFixed(2) : '';
+}
+document.getElementById('pf-gastado').addEventListener('input', recalcRoas);
+document.getElementById('pf-ingresos').addEventListener('input', recalcRoas);
+
+document.getElementById('saveCampanaBtn').addEventListener('click', async () => {
+  const nombre = document.getElementById('pf-nombre').value.trim();
+  if (!nombre) { alert('El nombre es obligatorio.'); return; }
+  const gastado = +document.getElementById('pf-gastado').value||0;
+  const ingresos = +document.getElementById('pf-ingresos').value||0;
+  const pfAsignadoSel = document.getElementById('pf-asignado');
+  const pfAsignadoEmail = pfAsignadoSel.value;
+  const pfAsignadoNombre = pfAsignadoSel.selectedOptions[0]?.dataset.nombre || '';
+  const obj = {
+    ...(editingCampana||{}), nombre,
+    plataforma: document.getElementById('pf-plataforma').value,
+    estado: document.getElementById('pf-estado').value,
+    asignado: pfAsignadoEmail ? { email: pfAsignadoEmail, nombre: pfAsignadoNombre } : null,
+    presupuesto: +document.getElementById('pf-presupuesto').value||0,
+    gastado, fechaInicio: document.getElementById('pf-inicio').value,
+    fechaFin: document.getElementById('pf-fin').value,
+    impresiones: +document.getElementById('pf-impresiones').value||0,
+    alcance: +document.getElementById('pf-alcance').value||0,
+    clics: +document.getElementById('pf-clics').value||0,
+    cpm: +document.getElementById('pf-cpm').value||0,
+    cpc: +document.getElementById('pf-cpc').value||0,
+    ctr: +document.getElementById('pf-ctr').value||0,
+    visitas: +document.getElementById('pf-visitas').value||0,
+    conversiones: +document.getElementById('pf-conversiones').value||0,
+    ingresos,
+    roas: gastado ? +(ingresos/gastado).toFixed(2) : 0,
+    roasEq: +document.getElementById('pf-roas-eq').value||0,
+  };
+  const saved = await saveCampana(clientId, obj);
+  if (editingCampana) { const i = STATE.campanas.findIndex(c => c.id === saved.id); STATE.campanas[i] = saved; }
+  else STATE.campanas.push(saved);
+  closeCampanaModal();
+  renderPauta(document.getElementById('main-content'));
+});
+
+document.getElementById('deleteCampanaBtn').addEventListener('click', async () => {
+  if (!editingCampana || !confirm('¿Eliminar esta campaña?')) return;
+  await deleteCampana(clientId, editingCampana.id);
+  STATE.campanas = STATE.campanas.filter(c => c.id !== editingCampana.id);
+  closeCampanaModal();
+  renderPauta(document.getElementById('main-content'));
+});
+
+// ──────────────────────────────────────────────────────
+// IMPORTAR CAMPAÑAS DESDE EXCEL
+// ──────────────────────────────────────────────────────
+const IMPORT_CAMPANA_ESTADOS = ['Activa', 'Pausada', 'Finalizada', 'Borrador'];
+const IMPORT_CAMPANA_PLATAFORMAS = ['Meta Ads', 'Google Ads', 'TikTok Ads', 'LinkedIn Ads'];
+const IMPORT_CAMPANA_HEADER_MAP = {
+  nombre: 'nombre',
+  plataforma: 'plataforma',
+  estado: 'estado',
+  'presupuesto total': 'presupuesto',
+  presupuesto: 'presupuesto',
+  'gastado hasta hoy': 'gastado',
+  gastado: 'gastado',
+  'fecha inicio': 'fechaInicio',
+  'fecha fin': 'fechaFin',
+  impresiones: 'impresiones',
+  alcance: 'alcance',
+  clics: 'clics',
+  cpm: 'cpm',
+  cpc: 'cpc',
+  ctr: 'ctr',
+  'visitas en pagina de destino': 'visitas',
+  visitas: 'visitas',
+  conversiones: 'conversiones',
+  'ingresos generados': 'ingresos',
+  ingresos: 'ingresos',
+  'roas de equilibrio break-even': 'roasEq',
+  'roas de equilibrio': 'roasEq',
+  roaseq: 'roasEq',
+};
+
+function importCampanaNum(val) {
+  if (val === '' || val == null) return 0;
+  const n = parseFloat(String(val).replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+}
+
+let _importCampanaRows = [];
+
+function openImportCampanasModal() {
+  _importCampanaRows = [];
+  document.getElementById('import-campana-file-input').value = '';
+  document.getElementById('import-campana-status').textContent = '';
+  document.getElementById('import-campana-preview').innerHTML = '';
+  document.getElementById('confirmImportCampanaBtn').disabled = true;
+  document.getElementById('importCampanaModal').classList.remove('hidden');
+  loadXLSXLib();
+}
+window.openImportCampanasModal = openImportCampanasModal;
+
+function closeImportCampanaModal() {
+  document.getElementById('importCampanaModal').classList.add('hidden');
+}
+document.getElementById('closeImportCampanaModal').addEventListener('click', closeImportCampanaModal);
+document.getElementById('closeImportCampanaModal2').addEventListener('click', closeImportCampanaModal);
+
+document.getElementById('import-campana-file-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById('import-campana-status');
+  const previewEl = document.getElementById('import-campana-preview');
+  const confirmBtn = document.getElementById('confirmImportCampanaBtn');
+  previewEl.innerHTML = '';
+  confirmBtn.disabled = true;
+  _importCampanaRows = [];
+  if (!file) return;
+
+  statusEl.textContent = 'Leyendo archivo…';
+  try {
+    await loadXLSXLib();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const sheetName = wb.SheetNames.find(n => normalizeHeader(n) === 'campanas') || wb.SheetNames[0];
+    const sheet = wb.Sheets[sheetName];
+    const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    if (!raw.length) { statusEl.textContent = 'El archivo no tiene filas.'; return; }
+
+    const headerRow = raw[0].map(normalizeHeader);
+    const fieldByCol = headerRow.map(h => IMPORT_CAMPANA_HEADER_MAP[h] || null);
+
+    const valid = [];
+    const errores = [];
+    for (let r = 1; r < raw.length; r++) {
+      const dataRow = raw[r];
+      if (!dataRow || dataRow.every(v => v === '' || v == null)) continue;
+      const obj = {};
+      fieldByCol.forEach((field, ci) => { if (field) obj[field] = dataRow[ci]; });
+
+      const nombre = String(obj.nombre || '').trim();
+      if (!nombre) { errores.push(`Fila ${r + 1}: falta el nombre de la campaña.`); continue; }
+
+      const plataformaRaw = String(obj.plataforma || '').trim();
+      const plataforma = IMPORT_CAMPANA_PLATAFORMAS.includes(plataformaRaw) ? plataformaRaw : 'Meta Ads';
+      const estadoRaw = String(obj.estado || '').trim();
+      const estado = IMPORT_CAMPANA_ESTADOS.includes(estadoRaw) ? estadoRaw : 'Activa';
+      const gastado = importCampanaNum(obj.gastado);
+      const ingresos = importCampanaNum(obj.ingresos);
+
+      valid.push({
+        nombre, plataforma, estado,
+        presupuesto: importCampanaNum(obj.presupuesto),
+        gastado,
+        fechaInicio: importParseFecha(obj.fechaInicio),
+        fechaFin: importParseFecha(obj.fechaFin),
+        impresiones: importCampanaNum(obj.impresiones),
+        alcance: importCampanaNum(obj.alcance),
+        clics: importCampanaNum(obj.clics),
+        cpm: importCampanaNum(obj.cpm),
+        cpc: importCampanaNum(obj.cpc),
+        ctr: importCampanaNum(obj.ctr),
+        visitas: importCampanaNum(obj.visitas),
+        conversiones: importCampanaNum(obj.conversiones),
+        ingresos,
+        roasEq: importCampanaNum(obj.roasEq),
+      });
+    }
+
+    _importCampanaRows = valid;
+    statusEl.textContent = `${valid.length} campaña(s) lista(s) para importar${errores.length ? ` · ${errores.length} fila(s) con error` : ''}.`;
+
+    previewEl.innerHTML = `
+      ${valid.length ? `<div class="table-wrapper table-scroll-wrap"><table class="data-table">
+        <thead><tr><th>Nombre</th><th>Plataforma</th><th>Estado</th><th>Presup.</th><th>Inicio</th><th>Fin</th></tr></thead>
+        <tbody>
+          ${valid.map(c => `<tr><td>${c.nombre}</td><td>${c.plataforma}</td><td>${c.estado}</td><td>$${c.presupuesto}</td><td>${c.fechaInicio || '—'}</td><td>${c.fechaFin || '—'}</td></tr>`).join('')}
+        </tbody>
+      </table></div>` : ''}
+      ${errores.length ? `<div style="margin-top:10px;padding:10px 12px;background:#fef2f2;border-radius:6px;font-size:12px;color:#991b1b;">${errores.join('<br>')}</div>` : ''}
+    `;
+    confirmBtn.disabled = !valid.length;
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'No se pudo leer el archivo. Verificá que sea un .xlsx válido.';
+  }
+});
+
+document.getElementById('confirmImportCampanaBtn').addEventListener('click', async () => {
+  if (!_importCampanaRows.length) return;
+  const btn = document.getElementById('confirmImportCampanaBtn');
+  btn.disabled = true; btn.textContent = 'Importando…';
+  try {
+    const saved = await saveCampanasBulk(clientId, _importCampanaRows);
+    STATE.campanas.push(...saved);
+    closeImportCampanaModal();
+    renderPauta(document.getElementById('main-content'));
+  } catch (err) {
+    console.error(err);
+    alert('Hubo un error al importar. Probá de nuevo.');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Importar';
+  }
+});
+
+// ──────────────────────────────────────────────────────
+// KANBAN DRAG & DROP
+// ──────────────────────────────────────────────────────
+// Auto-scroll mientras se arrastra una tarjeta cerca del borde -- sin
+// esto, para mover una tarjeta a otra columna hacía falta scrollear a
+// mano hasta que ambas entraran en pantalla a la vez (pedido de Vaneh,
+// 02/09). OJO: el layout de esta app NO scrollea la ventana -- .layout
+// tiene overflow:hidden y el que scrollea de verdad es .content (ver
+// css/style.css), así que window.scrollBy() no hacía nada (primer
+// intento fallido). Hay que mover .content (vertical) y .kanban-board
+// (horizontal, cuando hay más columnas de las que entran en pantalla).
+// Se registra UNA sola vez acá (no adentro de initKanbanDrag, que se
+// llama en cada render) para no acumular listeners.
+(function habilitarAutoScrollKanban() {
+  const MARGEN = 70, VELOCIDAD = 16;
+  document.addEventListener('dragover', (e) => {
+    const board = e.target.closest?.('.kanban-board');
+    if (!board) return;
+    const scroller = board.closest('.content') || document.scrollingElement;
+    if (scroller) {
+      const r = scroller.getBoundingClientRect();
+      if (e.clientY < r.top + MARGEN) scroller.scrollTop -= VELOCIDAD;
+      else if (e.clientY > r.bottom - MARGEN) scroller.scrollTop += VELOCIDAD;
+    }
+    const br = board.getBoundingClientRect();
+    if (e.clientX < br.left + MARGEN) board.scrollLeft -= VELOCIDAD;
+    else if (e.clientX > br.right - MARGEN) board.scrollLeft += VELOCIDAD;
+  });
+})();
+
+function initKanbanDrag(boardSelector, items, onDrop) {
+  let draggingId = null;
+  const board = document.querySelector(boardSelector);
+  if (!board) return;
+
+  board.querySelectorAll('.kanban-card[draggable]').forEach(card => {
+    card.addEventListener('dragstart', e => { draggingId = card.dataset.id; card.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', card.dataset.id); });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  });
+
+  board.querySelectorAll('.kanban-cards').forEach(zone => {
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.parentElement.classList.add('drag-over'); });
+    zone.addEventListener('dragleave', () => zone.parentElement.classList.remove('drag-over'));
+    zone.addEventListener('drop', async e => {
+      e.preventDefault();
+      zone.parentElement.classList.remove('drag-over');
+      if (draggingId) { await onDrop(draggingId, zone.dataset.col); draggingId = null; }
+    });
+  });
+}
+
+// ──────────────────────────────────────────────────────
+// HELPERS
+// ──────────────────────────────────────────────────────
+// Normalize linkDrive/linkDriveRef — supports old string or new array
+function firstLink(val) {
+  if (!val) return '';
+  return Array.isArray(val) ? (val[0] || '') : val;
+}
+
+function fmtDate(d) {
+  if (!d) return '';
+  try { return new Date(d + 'T12:00:00').toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }); } catch { return d; }
+}
+
+function fmtNum(n) {
+  if (!n && n !== 0) return '—';
+  return Number(n).toLocaleString('es-AR');
+}
+
+function statusBadge(estado) {
+  const map = { 'Idea':'s-idea','En proceso':'s-proceso','En revisión':'s-revision','Aprobado':'s-aprobado','Programado':'s-programado','Publicado':'s-publicado' };
+  return `<span class="status-badge ${map[estado]||'s-idea'}">${estado||'—'}</span>`;
+}
+
+function statusColor(estado) {
+  const map = { 'Idea':'#94a3b8','En proceso':'#f59e0b','En revisión':'#ec4899','Aprobado':'#10b981','Programado':'#3b82f6','Publicado':'#22c55e' };
+  return map[estado] || '#94a3b8';
+}
+
+function statusDot(estado) {
+  return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${statusColor(estado)};border:1.5px solid white;"></span>`;
+}
+
+function platBadge(plat) {
+  if (!plat) return '';
+  const map = { Instagram:'plat-ig', Facebook:'plat-fb', LinkedIn:'plat-li', Twitter:'plat-tw' };
+  const abbr = { Instagram:'IG', Facebook:'FB', LinkedIn:'LI', Twitter:'TW' };
+  return `<span class="plat-badge ${map[plat]||''}">${abbr[plat]||(plat.slice(0,2).toUpperCase())} · ${plat}</span>`;
+}
+
+function platIcon(plat) {
+  if (!plat) return '';
+  return { Instagram:'IG', Facebook:'FB', LinkedIn:'LI', Twitter:'TW' }[plat] || plat.slice(0,2).toUpperCase();
+}
+
+function driveThumb(url) {
+  const m = url && url.match(/\/d\/([^/]+)/);
+  return m ? `https://drive.google.com/thumbnail?id=${m[1]}&sz=w400` : '';
+}
+
+function normUbicacion(u) {
+  if (!u) return [];
+  return Array.isArray(u) ? u : [u];
+}
+
+// Marco de celular realista para todos los mockups (feed IG, muro FB,
+// post LI, stories, borrador) -- pedido de Vaneh (13/09): "el mockup
+// que habías hecho ES ESPANTOSO", con referencia de un iPhone real.
+// Un solo lugar para el marco -- lo que cambia entre vistas es
+// screenHtml (lo que se ve "adentro de la pantalla").
+function phoneFrame(screenHtml, { width = 260, label = '' } = {}) {
+  return `
+    <div style="flex-shrink:0;width:${width}px;">
+      <div class="phone-device" style="width:${width}px;">
+        <div class="phone-btn vol-up"></div>
+        <div class="phone-btn vol-down"></div>
+        <div class="phone-btn power"></div>
+        <div class="phone-screen">
+          <div class="phone-island"></div>
+          <div class="phone-screen-content">${screenHtml}</div>
+        </div>
+      </div>
+      ${label ? `<div class="phone-label">${label}</div>` : ''}
+    </div>
+  `;
+}
+
+// ── Recurrencia → show/hide dias-semana ───────────────
+// Pedido de Vaneh (07/09): si la recurrencia es diaria o semanal, tiene
+// que quedar claro qué día se repite -- para "semanal" se toma el día de
+// la semana de la fecha de Vencimiento ya cargada (mismo criterio que en
+// admin/index.html, duplicado acá porque este modal vive en otro archivo).
+const NOMBRES_DIA_SEMANA = ['domingos', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábados'];
+function actualizarPreviewRecurrenciaTf() {
+  const preview = document.getElementById('tf-recurrencia-preview');
+  if (!preview) return;
+  const recurrencia = document.getElementById('tf-recurrencia').value;
+  if (recurrencia === 'diaria') { preview.textContent = 'Se repite todos los días.'; return; }
+  if (recurrencia === 'semanal') {
+    const vencimiento = document.getElementById('tf-vencimiento').value;
+    if (!vencimiento) { preview.textContent = 'Elegí la fecha de vencimiento para saber qué día se repite.'; return; }
+    const dia = new Date(vencimiento + 'T00:00:00').getDay();
+    preview.textContent = `Se repite todos los ${NOMBRES_DIA_SEMANA[dia]}.`;
+    return;
+  }
+  preview.textContent = '';
+}
+document.getElementById('tf-recurrencia').addEventListener('change', function() {
+  document.getElementById('dias-semana-group').style.display = this.value === 'dias-semana' ? '' : 'none';
+  actualizarPreviewRecurrenciaTf();
+});
+document.getElementById('tf-vencimiento').addEventListener('change', actualizarPreviewRecurrenciaTf);
+
+// ── Todo modal wiring ──────────────────────────────────
+function closeTodoModal() { document.getElementById('todoModal').classList.add('hidden'); }
+document.getElementById('closeTodoModal').addEventListener('click', closeTodoModal);
+document.getElementById('closeTodoModal2').addEventListener('click', closeTodoModal);
+document.getElementById('saveTodoBtn').addEventListener('click', async () => {
+  const text = document.getElementById('todo-text').value.trim();
+  if (!text) { alert('El título es obligatorio.'); return; }
+  const vencimiento = document.getElementById('todo-vencimiento').value || null;
+  const prioridad = document.getElementById('todo-prioridad').value;
+  // Create as a real tarea so it appears in the Kanban too
+  const obj = { titulo: text, estado: 'Sin empezar', prioridad, vencimiento, notas: '', subtareas: [] };
+  const saved = await saveTarea(clientId, obj);
+  STATE.tareas.push(saved);
+  closeTodoModal();
+  updateBadges();
+  if (currentSection === 'home') renderSection('home');
+  else if (currentSection === 'tareas') refreshTareasView();
+});
+
+// ── Link modal wiring ──────────────────────────────────
+function closeLinkModal() { document.getElementById('linkModal').classList.add('hidden'); }
+document.getElementById('closeLinkModal').addEventListener('click', closeLinkModal);
+document.getElementById('closeLinkModal2').addEventListener('click', closeLinkModal);
+document.getElementById('saveLinkBtn').addEventListener('click', async () => {
+  const titulo = document.getElementById('lf-titulo').value.trim();
+  const url = document.getElementById('lf-url').value.trim();
+  if (!titulo || !url) { alert('Título y URL son obligatorios.'); return; }
+  const obj = { ...(_editingLink || {}), id: _editingLink?.id || Date.now(), titulo, url, desc: document.getElementById('lf-desc').value.trim(), categoria: (document.getElementById('lf-categoria')?.value || '').trim() };
+  if (_editingLink) {
+    const i = STATE.links.findIndex(l => l.id === obj.id);
+    STATE.links[i] = obj;
+  } else {
+    STATE.links.push(obj);
+  }
+  STATE.home.links = STATE.links;
+  await saveHomeData(clientId, STATE.home);
+  closeLinkModal();
+  renderLinks(document.getElementById('links-col-body'));
+  setTimeout(refreshIcons, 50);
+});
+document.getElementById('deleteLinkBtn').addEventListener('click', async () => {
+  if (!_editingLink || !confirm('¿Eliminar este link?')) return;
+  STATE.links = STATE.links.filter(l => l.id !== _editingLink.id);
+  STATE.home.links = STATE.links;
+  await saveHomeData(clientId, STATE.home);
+  closeLinkModal();
+  renderLinks(document.getElementById('links-col-body'));
+  setTimeout(refreshIcons, 50);
+});
+
+// ── Idea modal wiring ──────────────────────────────────
+function closeIdeaModal() { document.getElementById('ideaModal').classList.add('hidden'); }
+document.getElementById('closeIdeaModal').addEventListener('click', closeIdeaModal);
+document.getElementById('closeIdeaModal2').addEventListener('click', closeIdeaModal);
+document.getElementById('saveIdeaBtn').addEventListener('click', async () => {
+  const titulo = document.getElementById('if-titulo').value.trim();
+  if (!titulo) { alert('El título es obligatorio.'); return; }
+  const plats = Array.from(document.querySelectorAll('.idea-plat-check:checked')).map(cb => cb.value);
+  const obj = {
+    ...(_editingIdea || {}),
+    titulo,
+    notas: document.getElementById('if-notas').value,
+    formato: document.getElementById('if-formato').value,
+    plataformas: plats,
+    links: _ideaLinks.map(l => l.trim()).filter(Boolean),
+  };
+  const saved = await saveIdea(clientId, obj);
+  if (_editingIdea) { const i = STATE.ideas.findIndex(x => x.id === saved.id); STATE.ideas[i] = saved; }
+  else STATE.ideas.push(saved);
+  closeIdeaModal();
+  renderContTab('ideas');
+});
+
+// ── Sitio Web modal wiring ─────────────────────────────
+function closeWebTaskModal() { document.getElementById('webTaskModal').classList.add('hidden'); }
+document.getElementById('closeWebTaskModal').addEventListener('click', closeWebTaskModal);
+document.getElementById('closeWebTaskModal2').addEventListener('click', closeWebTaskModal);
+
+document.getElementById('saveWebTaskBtn').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  if (btn.disabled) return;
+  const titulo = document.getElementById('wt-titulo').value.trim();
+  if (!titulo) { alert('La descripción es obligatoria.'); return; }
+  if (_wtImgList.some(i => i.subiendo)) { alert('Esperá a que termine de subir la imagen.'); return; }
+  btn.disabled = true; btn.textContent = 'Guardando…';
+  try {
+    if (!STATE.home.webTareas) STATE.home.webTareas = [];
+    const wtEstadoVal = document.getElementById('wt-estado').value;
+    const wtAsignadoEl = document.getElementById('wt-asignado');
+    const wtAsignadoEmail = wtAsignadoEl.value;
+    const wtAsignadoNombre = wtAsignadoEl.selectedOptions[0]?.dataset.nombre || '';
+    const prevWtAsignadoEmail = _editingWebTask?.asignado?.email || '';
+    const obj = {
+      ...(_editingWebTask || {}),
+      id: _editingWebTask?.id || Date.now(),
+      titulo,
+      categoria: document.getElementById('wt-categoria').value,
+      estado: wtEstadoVal,
+      vencimiento: document.getElementById('wt-vencimiento').value || null,
+      url: document.getElementById('wt-url').value.trim() || null,
+      notas: document.getElementById('wt-notas').value.trim(),
+      asignado: wtAsignadoEmail ? { email: wtAsignadoEmail, nombre: wtAsignadoNombre } : null,
+      subtareas: [..._wtSubtareas],
+      imagenes: serializarImagenesWt(_wtImgList),
+      completadoEn: wtEstadoVal === 'Listo' ? (_editingWebTask?.estado === 'Listo' ? _editingWebTask.completadoEn : new Date().toISOString().split('T')[0]) : null,
+    };
+    if (_editingWebTask) {
+      const i = STATE.home.webTareas.findIndex(t => t.id === obj.id);
+      STATE.home.webTareas[i] = obj;
+    } else {
+      STATE.home.webTareas.push(obj);
+    }
+    await saveHomeData(clientId, STATE.home);
+    // Pedido de Vaneh (29/09): asignar una tarea de Sitio Web nunca avisaba
+    // a nadie -- a diferencia de Tareas/Contenidos, este guardado no pasa
+    // por saveTarea/saveContenido (vive en STATE.home, sin webhook) así
+    // que había que llamar a notifyAsignacion a mano, como corresponde.
+    notifyAsignacion('web', obj, prevWtAsignadoEmail);
+    closeWebTaskModal();
+    renderSection(currentSection);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Guardar';
+  }
+});
+
+document.getElementById('deleteWebTaskBtn').addEventListener('click', async () => {
+  if (!_editingWebTask || !confirm('¿Eliminar esta tarea?')) return;
+  STATE.home.webTareas = (STATE.home.webTareas||[]).filter(t => t.id !== _editingWebTask.id);
+  await saveHomeData(clientId, STATE.home);
+  closeWebTaskModal();
+  renderSection(currentSection);
+});
+
+// ── Aprobación de contenido ────────────────────────────
+window.aprobarContenido = async function(id) {
+  const c = STATE.contenidos.find(x => x.id === id);
+  if (!c) return;
+  c.estado = 'Aprobado';
+  await saveContenido(clientId, c);
+  STATE.contenidos[STATE.contenidos.findIndex(x => x.id === id)] = c;
+  renderContTab(activeContTab);
+  // Notificar al cliente por email
+  if (STATE.client.email) {
+    const { WORKER_URL } = await import('./firebase.js');
+    const { getSessionToken } = await import('./auth.js');
+    fetch(WORKER_URL + '/email/aprobado', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getSessionToken()}` },
+      body: JSON.stringify({
+        toEmail: STATE.client.email,
+        toName: STATE.client.nombre || STATE.client.name || '',
+        titulo: c.titulo || '',
+        tipo: c.tipo || '',
+        cuenta: c.cuenta || c.red || '',
+        fechaPub: c.fechaPub || '',
+        clientId,
+      }),
+    }).catch(() => {});
+  }
+};
+
+window.rechazarContenido = async function(id) {
+  const c = STATE.contenidos.find(x => x.id === id);
+  if (!c) return;
+  const motivo = prompt('Motivo del rechazo (opcional):');
+  if (motivo === null) return;
+  c.estado = 'En proceso';
+  if (motivo) c.notas = `[Rechazado: ${motivo}]${c.notas ? ' — ' + c.notas : ''}`;
+  await saveContenido(clientId, c);
+  STATE.contenidos[STATE.contenidos.findIndex(x => x.id === id)] = c;
+  renderContTab(activeContTab);
+};
+
+// ── Comentarios ────────────────────────────────────────
+window.transformarComentarioEnTarea = function(idx) {
+  const c = (editingTarea?.comentarios || [])[idx];
+  if (!c) return;
+  openTareaModal(null);
+  document.getElementById('tf-titulo').value = (c.texto || '').slice(0, 120);
+};
+
+function renderComments(ctx, comments) {
+  const prefix = ctx === 'cont' ? 'cont' : 'tarea';
+  const listEl = document.getElementById(`${prefix}-comments-list`);
+  if (!listEl) return;
+  if (!comments || !comments.length) {
+    listEl.innerHTML = '<p style="font-size:12px;color:var(--text-muted);margin:0;">Sin comentarios aún.</p>';
+    return;
+  }
+  listEl.innerHTML = comments.map((c, idx) => {
+    const inicial = (c.autor || '?')[0].toUpperCase();
+    const textoHtml = ctx === 'cont' ? linkify(escapeHtml(c.texto || '')) : linkify(escapeHtml(c.texto || '').replace(/@(\w+)/g, '<strong style="color:var(--accent);">@$1</strong>'));
+    // El autor de un comentario no cuenta como "lo vio" -- obvio que lo
+    // vio, lo escribió él (pedido de Vaneh, 13/09). Se filtra al renderizar
+    // en vez de al guardar, así datos viejos que ya tuvieran al autor
+    // adentro se corrigen solos sin tener que migrar nada.
+    const vistoPor = (c.vistoPor || []).filter(v => v.email !== c.email);
+    const yoLoVi = vistoPor.some(v => v.email === user.email);
+    const esAutor = c.email === user.email;
+    const vistoTitle = vistoPor.length ? `Visto por ${vistoPor.map(v => v.nombre).join(', ')}` : 'Todavía nadie lo vio';
+    const vistoColor = vistoPor.length ? '#10b981' : '#94a3b8';
+    const vistoHtml = ctx === 'cont' ? '' : esAutor
+      ? `<span title="${vistoTitle}" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:${vistoColor};font-weight:${vistoPor.length ? '700' : '400'};">✓ ${vistoTitle}</span>`
+      : `<button onclick="toggleCommentSeen('${ctx}',${idx})" title="${yoLoVi ? 'Sacar mi visto' : 'Marcar como visto'}" style="background:none;border:none;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:4px;font-size:11px;color:${yoLoVi ? '#10b981' : '#94a3b8'};font-weight:${yoLoVi ? '700' : '400'};">✓ ${vistoPor.length ? vistoTitle : 'Marcar como visto'}</button>`;
+    return `
+    <div style="display:flex;gap:8px;align-items:flex-start;">
+      <div style="width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">${inicial}</div>
+      <div style="flex:1;background:#f8fafc;border:1px solid var(--border-strong);border-radius:8px;padding:7px 10px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+          <span style="font-size:11px;font-weight:700;color:var(--text);">${c.autor || 'Anónimo'}</span>
+          <span style="font-size:10px;color:var(--text-muted);">${c.fecha || ''}</span>
+        </div>
+        <p style="font-size:13px;margin:0 0 4px;color:var(--text);">${textoHtml}</p>
+        <div style="display:flex;align-items:center;">
+          ${vistoHtml}
+          ${ctx === 'tarea' ? `<button onclick="transformarComentarioEnTarea(${idx})" title="Transformar este comentario en una tarea nueva" style="background:none;border:none;cursor:pointer;padding:0;margin-left:auto;font-size:11px;color:#cbd5e1;">+ Nueva tarea</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  listEl.scrollTop = listEl.scrollHeight;
+}
+
+function renderAsignadoVisto(selectId, item) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const existing = document.getElementById(selectId + '-visto');
+  if (existing) existing.remove();
+  const a = item?.asignado;
+  if (!a || !a.email) return;
+  const div = document.createElement('div');
+  div.id = selectId + '-visto';
+  div.style.cssText = 'font-size:11px;margin-top:4px;';
+  if (a.visto) {
+    div.style.color = '#10b981';
+    div.textContent = `👁 Visto por ${a.nombre}${a.vistoFecha ? ' el ' + a.vistoFecha : ''}`;
+  } else {
+    div.style.color = '#94a3b8';
+    div.textContent = `${a.nombre} todavía no vio esta asignación`;
+  }
+  sel.insertAdjacentElement('afterend', div);
+}
+
+async function marcarAsignacionVista(item, saveFn, stateArr) {
+  const a = item?.asignado;
+  if (!a || a.email !== user.email || a.visto) return;
+  a.visto = true;
+  a.vistoFecha = new Date().toLocaleDateString('es-AR');
+  const saved = await saveFn(clientId, item);
+  const i = stateArr.findIndex(x => x.id === item.id);
+  if (i >= 0) stateArr[i] = saved;
+}
+
+async function notifyAsignacion(tipo, item, prevAsignadoEmail) {
+  const asignado = item.asignado;
+  if (!asignado || !asignado.email || asignado.email === prevAsignadoEmail || asignado.email === user.email) return;
+  try {
+    const { WORKER_URL } = await import('./firebase.js');
+    const { getSessionToken } = await import('./auth.js');
+    fetch(WORKER_URL + '/email/asignacion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getSessionToken()}` },
+      body: JSON.stringify({
+        toEmail: asignado.email,
+        toName: asignado.nombre,
+        asignadorNombre: user.name || user.email.split('@')[0],
+        titulo: item.titulo || '',
+        tipo,
+        itemId: item.id,
+        clientId,
+      }),
+    }).catch(() => {});
+  } catch (e) { /* no bloquea el guardado si falla la notificación */ }
+}
+
+function getAsignarOptions(currentEmail) {
+  const options = [];
+  if (STATE.client.email) options.push({ nombre: STATE.client.nombre || STATE.client.name || 'Cliente', email: STATE.client.email });
+  (STATE.client.usuarios || []).forEach(u => options.push(u));
+  _equipoDelCliente.forEach(c => options.push(c));
+  const seen = new Set();
+  const unique = options.filter(u => {
+    if (!u.email || seen.has(u.email.toLowerCase())) return false;
+    seen.add(u.email.toLowerCase());
+    return true;
+  });
+  return '<option value="">Sin asignar</option>' + unique.map(u =>
+    `<option value="${u.email}" data-nombre="${u.nombre}" ${currentEmail === u.email ? 'selected' : ''}>${u.nombre} — ${u.email}</option>`
+  ).join('');
+}
+
+// Mismo equipo que getAsignarOptions (cliente + colaboradores agregados
+// en "Equipo") pero para el filtro de Tareas -- sin el "Sin asignar" de
+// arriba (ese es la opción por defecto al asignar; acá va aparte, al
+// final, como filtro explícito).
+function opcionesFiltroAsignadoTareas() {
+  const options = [];
+  if (STATE.client.email) options.push({ nombre: STATE.client.nombre || STATE.client.name || 'Cliente', email: STATE.client.email });
+  (STATE.client.usuarios || []).forEach(u => options.push(u));
+  _equipoDelCliente.forEach(c => options.push(c));
+  const seen = new Set();
+  const unique = options.filter(u => {
+    if (!u.email || seen.has(u.email.toLowerCase())) return false;
+    seen.add(u.email.toLowerCase());
+    return true;
+  });
+  return unique.map(u => `<option value="${u.email}">${u.nombre}</option>`).join('');
+}
+
+function getMentionUsers() {
+  const lista = [{ nombre: user.name || user.email.split('@')[0], email: user.email }];
+  // El contacto principal del cliente (STATE.client.email/nombre) nunca
+  // se incluía acá -- solo el "equipo" (usuarios) agregado aparte. Mismo
+  // criterio que ya usa getAsignarOptions para el desplegable de asignar.
+  if (STATE.client.email) lista.push({ nombre: STATE.client.nombre || STATE.client.name || 'Cliente', email: STATE.client.email });
+  lista.push(...(STATE.client.usuarios || []));
+  lista.push(..._equipoDelCliente);
+  const seen = new Set();
+  return lista.filter(u => {
+    if (!u.email || seen.has(u.email.toLowerCase())) return false;
+    seen.add(u.email.toLowerCase());
+    return true;
+  });
+}
+
+// Detecta a quién se mencionó con @ dentro de un comentario, buscando por
+// NOMBRE COMPLETO (el más largo primero) en vez de una sola palabra: con
+// /@(\w+)/g un nombre con espacio (ej. "Vale Díaz") se cortaba en la
+// primera palabra y nunca encontraba al usuario, así que nunca le llegaba
+// el mail. Pedido de Vaneh (14/09): que arrobar a cualquiera le mande un mail.
+function detectarUsuariosMencionados(texto, candidatos) {
+  const validos = candidatos.filter(u => u.nombre && u.email);
+  const porNombreCompleto = [...validos].sort((a, b) => b.nombre.length - a.nombre.length);
+  // Pedido de Vaneh (29/09): "no estoy segura que le esté llegando al que
+  // arrobo" -- el matching original SOLO reconocía el nombre completo
+  // exacto (ej. "@Vale Díaz"), así que arrobar por el nombre de pila
+  // (ej. "@Vale", muy común si no se espera al autocomplete) no
+  // encontraba a nadie y el mail nunca se mandaba, en silencio, sin
+  // ningún aviso de que había fallado. Ahora, si no matcheó el nombre
+  // completo, se prueba también contra la PRIMERA PALABRA de cada
+  // candidato, exigiendo que después venga un límite de palabra (espacio,
+  // puntuación o fin del texto) para no confundir "@Vale" con "Valeria".
+  const porPrimerNombre = validos
+    .map(u => ({ u, primera: u.nombre.split(' ')[0].toLowerCase() }))
+    .filter(({ primera }) => primera.length >= 3)
+    .sort((a, b) => b.primera.length - a.primera.length);
+  const encontrados = new Map();
+  let idx = 0;
+  while ((idx = texto.indexOf('@', idx)) !== -1) {
+    const resto = texto.slice(idx + 1).toLowerCase();
+    let match = porNombreCompleto.find(u => resto.startsWith(u.nombre.toLowerCase()));
+    if (!match) {
+      const hit = porPrimerNombre.find(({ primera }) => {
+        if (!resto.startsWith(primera)) return false;
+        const siguiente = resto[primera.length];
+        return siguiente === undefined || /[\s,.;:!?]/.test(siguiente);
+      });
+      if (hit) match = hit.u;
+    }
+    if (match) encontrados.set(match.email.toLowerCase(), match);
+    idx++;
+  }
+  return [...encontrados.values()];
+}
+
+function setupMentionAutocomplete(inputId, dropdownId) {
+  const input = document.getElementById(inputId);
+  const dropdown = document.getElementById(dropdownId);
+  if (!input || !dropdown) return;
+  input.addEventListener('input', () => {
+    const val = input.value;
+    const atIdx = val.lastIndexOf('@');
+    if (atIdx === -1) { dropdown.classList.add('hidden'); return; }
+    const query = val.slice(atIdx + 1).toLowerCase();
+    const users = getMentionUsers().filter(u => u.nombre.toLowerCase().includes(query) || u.email.toLowerCase().includes(query));
+    if (!users.length) { dropdown.classList.add('hidden'); return; }
+    dropdown.innerHTML = users.map(u => `
+      <div class="mention-item" data-nombre="${u.nombre}">
+        <div class="mention-avatar">${u.nombre[0].toUpperCase()}</div>
+        <div><div style="font-weight:600;font-size:12px;">${u.nombre}</div><div style="font-size:11px;color:var(--text-muted);">${u.email}</div></div>
+      </div>`).join('');
+    dropdown.classList.remove('hidden');
+    dropdown.querySelectorAll('.mention-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const nombre = item.dataset.nombre;
+        const atIdx2 = input.value.lastIndexOf('@');
+        input.value = input.value.slice(0, atIdx2) + '@' + nombre + ' ';
+        dropdown.classList.add('hidden');
+        input.focus();
+      });
+    });
+  });
+  input.addEventListener('blur', () => setTimeout(() => dropdown.classList.add('hidden'), 150));
+}
+
+async function doAddComment(ctx, editingObj, saveFn, stateArr, idField) {
+  const prefix = ctx === 'cont' ? 'cont' : 'tarea';
+  const input = document.getElementById(`${prefix}-comment-input`);
+  if (!input) return;
+  const texto = input.value.trim();
+  if (!texto) return;
+  if (!editingObj) {
+    input.placeholder = '⚠ Guardá primero para comentar';
+    setTimeout(() => { input.placeholder = ctx === 'cont' ? 'Escribí un comentario...' : '@usuario — escribí un comentario...'; }, 2000);
+    return;
+  }
+  const autorNombre = user.name || user.email.split('@')[0];
+  const comment = { autor: autorNombre, email: user.email, fecha: new Date().toLocaleDateString('es-AR'), texto };
+  if (!editingObj.comentarios) editingObj.comentarios = [];
+  editingObj.comentarios.push(comment);
+  await saveFn(clientId, editingObj);
+  const i = stateArr.findIndex(x => x.id === editingObj.id);
+  if (i >= 0) stateArr[i] = editingObj;
+  input.value = '';
+  renderComments(ctx, editingObj.comentarios);
+  if (ctx === 'cont') return; // autocomentario: sin menciones ni mails
+  // Notificar por email a los usuarios mencionados con @
+  const allUsers = getMentionUsers();
+  const mencionados = detectarUsuariosMencionados(texto, allUsers);
+  const statusEl = document.getElementById(`${prefix}-mencion-status`);
+  const aAvisar = mencionados.filter(u => u.email && u.email.toLowerCase() !== user.email.toLowerCase());
+  // Feedback visible (29/09, Vaneh: "no estoy segura que le esté llegando
+  // al que arrobo") -- antes esto fallaba en silencio si el @mención no
+  // matcheaba a nadie, sin ningún indicio de que no se avisó a nadie.
+  // 02/10: Vaneh se arrobó a sí misma para probar y el mensaje decía "no
+  // reconocimos a quién arrobaste", que es engañoso -- SÍ la reconoció
+  // (está en `mencionados`), lo que pasa es que a una misma no se le
+  // manda mail (ver el filtro de `aAvisar`). Separa ambos casos.
+  if (statusEl) {
+    if (!texto.includes('@')) {
+      statusEl.textContent = '';
+    } else if (!mencionados.length) {
+      statusEl.textContent = '⚠ No reconocimos a quién arrobaste -- no se avisó a nadie por mail.';
+      statusEl.style.color = '#c0392b';
+    } else if (aAvisar.length) {
+      statusEl.textContent = `✓ Se avisó por mail a ${aAvisar.map(u => u.nombre).join(', ')}.`;
+      statusEl.style.color = '';
+    } else {
+      statusEl.textContent = 'ℹ Te arrobaste a vos misma/o -- no se manda mail para eso.';
+      statusEl.style.color = '';
+    }
+  }
+  const { WORKER_URL } = await import('./firebase.js');
+  const { getSessionToken } = await import('./auth.js');
+  aAvisar.forEach(u => {
+    fetch(WORKER_URL + '/email/mencion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getSessionToken()}` },
+      body: JSON.stringify({
+        toEmail: u.email,
+        toName: u.nombre,
+        mencionador: autorNombre,
+        contexto: editingObj.titulo || '',
+        tipo: ctx === 'cont' ? 'contenido' : 'tarea',
+        itemId: editingObj.id,
+        clientId,
+      }),
+    }).catch(() => {});
+  });
+}
+
+window.addContenidoComment = () => doAddComment('cont', editingContenido, saveContenido, STATE.contenidos);
+window.addTareaComment = () => doAddComment('tarea', editingTarea, saveTarea, STATE.tareas);
+
+window.toggleCommentSeen = async function(ctx, idx) {
+  const editingObj = ctx === 'cont' ? editingContenido : editingTarea;
+  const saveFn = ctx === 'cont' ? saveContenido : saveTarea;
+  const stateArr = ctx === 'cont' ? STATE.contenidos : STATE.tareas;
+  if (!editingObj || !editingObj.comentarios || !editingObj.comentarios[idx]) return;
+  const comment = editingObj.comentarios[idx];
+  if (comment.email === user.email) return; // el autor no puede marcarse "visto" a sí mismo
+  if (!comment.vistoPor) comment.vistoPor = [];
+  const yaLoVi = comment.vistoPor.findIndex(v => v.email === user.email);
+  if (yaLoVi >= 0) comment.vistoPor.splice(yaLoVi, 1);
+  else comment.vistoPor.push({ email: user.email, nombre: user.name || user.email.split('@')[0] });
+  await saveFn(clientId, editingObj);
+  const i = stateArr.findIndex(x => x.id === editingObj.id);
+  if (i >= 0) stateArr[i] = editingObj;
+  renderComments(ctx, editingObj.comentarios);
+};
+
+// Inicializar autocomplete de mentions al cargar
+setTimeout(() => {
+  setupMentionAutocomplete('tarea-comment-input', 'tarea-mention-list');
+}, 200);
+
+// ── Gestión de equipo ──────────────────────────────────
+window.openEquipoModal = function() {
+  renderEquipoList();
+  ['eq-nombre','eq-apellido','eq-email','eq-telefono','eq-instagram','eq-linkedin','eq-tiktok','eq-facebook'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('eq-rol').value = 'Responsable COSMART';
+  document.getElementById('eq-cargo').value = '';
+  document.getElementById('equipoModal').classList.remove('hidden');
+};
+
+function renderEquipoList() {
+  const usuarios = STATE.client.usuarios || [];
+  const list = document.getElementById('equipo-list');
+  if (!list) return;
+  if (!usuarios.length) {
+    list.innerHTML = '<p style="font-size:12px;color:var(--text-muted);">Sin usuarios agregados todavía.</p>';
+    return;
+  }
+  const redes = (u) => [
+    u.instagram ? `<a href="https://instagram.com/${u.instagram.replace(/^@/,'')}" target="_blank" style="color:var(--accent);">IG</a>` : '',
+    u.linkedin ? `<a href="${u.linkedin.startsWith('http') ? u.linkedin : 'https://' + u.linkedin}" target="_blank" style="color:var(--accent);">in</a>` : '',
+    u.tiktok ? `<a href="https://tiktok.com/${u.tiktok.startsWith('@') ? u.tiktok : '@' + u.tiktok}" target="_blank" style="color:var(--accent);">TT</a>` : '',
+    u.facebook ? `<a href="${u.facebook.startsWith('http') ? u.facebook : 'https://' + u.facebook}" target="_blank" style="color:var(--accent);">FB</a>` : '',
+  ].filter(Boolean).join(' · ');
+  list.innerHTML = usuarios.map((u, i) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#f8fafc;border:1px solid var(--border-strong);border-radius:8px;">
+      <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;">${(u.nombre||'?')[0].toUpperCase()}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:13px;">${u.nombre}${u.apellido ? ' ' + u.apellido : ''}</div>
+        <div style="font-size:11px;color:var(--text-muted);">${u.email}${u.telefono ? ' · ' + u.telefono : ''} · <span style="color:var(--accent);">${u.rol||'Usuario'}</span>${u.cargo ? ' · ' + u.cargo : ''}</div>
+        ${redes(u) ? `<div style="font-size:11px;margin-top:2px;">${redes(u)}</div>` : ''}
+      </div>
+      <button onclick="eliminarUsuarioEquipo(${i})" style="background:none;border:none;cursor:pointer;color:#94a3b8;font-size:18px;padding:2px 6px;" title="Eliminar">×</button>
+    </div>
+  `).join('');
+}
+
+window.agregarUsuarioEquipo = async function() {
+  const nombre = document.getElementById('eq-nombre').value.trim();
+  const apellido = document.getElementById('eq-apellido').value.trim();
+  const email = document.getElementById('eq-email').value.trim();
+  const telefono = document.getElementById('eq-telefono').value.trim();
+  const rol = document.getElementById('eq-rol').value;
+  const cargo = document.getElementById('eq-cargo').value;
+  const instagram = document.getElementById('eq-instagram').value.trim();
+  const linkedin = document.getElementById('eq-linkedin').value.trim();
+  const tiktok = document.getElementById('eq-tiktok').value.trim();
+  const facebook = document.getElementById('eq-facebook').value.trim();
+  if (!nombre || !email) { alert('Nombre y email son obligatorios.'); return; }
+  if (!STATE.client.usuarios) STATE.client.usuarios = [];
+  if (STATE.client.usuarios.length >= 5) { alert('Límite alcanzado: podés tener hasta 5 miembros en tu equipo.'); return; }
+  if (STATE.client.usuarios.find(u => u.email === email)) { alert('Ya existe un usuario con ese email.'); return; }
+  STATE.client.usuarios.push({ nombre, apellido, email, telefono, rol, cargo, instagram, linkedin, tiktok, facebook });
+  await saveClientData(clientId, { usuarios: STATE.client.usuarios });
+  ['eq-nombre','eq-apellido','eq-email','eq-telefono','eq-instagram','eq-linkedin','eq-tiktok','eq-facebook'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('eq-cargo').value = '';
+  renderEquipoList();
+};
+
+window.eliminarUsuarioEquipo = async function(idx) {
+  if (!confirm('¿Eliminar este usuario del equipo?')) return;
+  STATE.client.usuarios.splice(idx, 1);
+  await saveClientData(clientId, { usuarios: STATE.client.usuarios });
+  renderEquipoList();
+};
+
+// Close modals on overlay click
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  if (overlay.id === 'mustChangePasswordModal') return; // obligatorio, no se cierra clickeando afuera
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.add('hidden'); });
+});
+
+// ── Mobile sidebar toggle ──────────────────────────────
+const _sidebar = document.querySelector('.sidebar');
+const _sidebarOverlay = document.getElementById('sidebar-overlay');
+const _sidebarToggle = document.getElementById('sidebar-toggle');
+
+function openMobileSidebar() {
+  _sidebar.classList.add('open');
+  _sidebarOverlay.classList.add('active');
+}
+function closeMobileSidebar() {
+  _sidebar.classList.remove('open');
+  _sidebarOverlay.classList.remove('active');
+}
+
+_sidebarToggle?.addEventListener('click', () => {
+  _sidebar.classList.contains('open') ? closeMobileSidebar() : openMobileSidebar();
+});
+_sidebarOverlay?.addEventListener('click', closeMobileSidebar);
+
+// Cerrar al navegar en mobile
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => { if (window.innerWidth <= 768) closeMobileSidebar(); });
+});
+
+// ── Bottom nav mobile ──────────────────────────────────
+const _bottomNav = document.getElementById('mobile-bottom-nav');
+
+function updateBottomNav(sec) {
+  if (!_bottomNav) return;
+  _bottomNav.querySelectorAll('.bnav-btn[data-section]').forEach(b => {
+    b.classList.toggle('active', b.dataset.section === sec);
+  });
+}
+
+function updateFab(sec) {
+  const fab = document.getElementById('fab-btn');
+  if (!fab) return;
+  const fabSections = { home: () => openTareaModal(null), contenidos: () => openContenidoModal(null), tareas: () => openTareaModal(null) };
+  if (fabSections[sec] && window.innerWidth <= 768) {
+    fab.style.display = 'flex';
+    fab.onclick = fabSections[sec];
+  } else {
+    fab.style.display = 'none';
+  }
+}
+
+// Bottom nav clicks
+_bottomNav?.querySelectorAll('.bnav-btn[data-section]').forEach(btn => {
+  btn.addEventListener('click', () => renderSection(btn.dataset.section));
+});
+
+// Botón "Más" → abre sidebar
+document.getElementById('bnav-more')?.addEventListener('click', openMobileSidebar);
+
+// Badge tareas en bottom nav
+function updateBnavBadge() {
+  const badge = document.getElementById('bnav-badge-tareas');
+  if (!badge) return;
+  const vencidas = (STATE.tareas || []).filter(t => !t.archivado && t.vencimiento && t.vencimiento < new Date().toISOString().split('T')[0]).length;
+  badge.textContent = vencidas || '';
+  badge.classList.toggle('visible', vencidas > 0);
+}
+
+
+// ── Collapsible avanzado en modal contenido ────────────
+window.toggleContAdvanced = function() {
+  const section = document.getElementById('cont-advanced');
+  const btn = document.getElementById('cont-advanced-toggle');
+  if (!section || !btn) return;
+  const isOpen = section.classList.contains('open');
+  section.classList.toggle('open', !isOpen);
+  btn.classList.toggle('open', !isOpen);
+  btn.innerHTML = `<i data-lucide="${isOpen ? 'chevron-down' : 'chevron-up'}" style="width:14px;height:14px;stroke-width:2;"></i> ${isOpen ? 'Ver más opciones' : 'Ocultar opciones avanzadas'}`;
+  refreshIcons();
+};
+
+// ── Start ──────────────────────────────────────────────
+// Íconos de línea (nunca emojis de sistema): azul o rojo sobre fondo claro, blanco sobre fondo oscuro/azul/rojo.
+function ico(nombre, color = 'azul', tam = 15) {
+  return `<i data-lucide="${nombre}" class="ico ico-${color}" style="width:${tam}px;height:${tam}px;stroke-width:2;"></i>`;
+}
+function refreshIcons() {
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function showMustChangePasswordModal() {
+  const modal = document.getElementById('mustChangePasswordModal');
+  if (!modal) { init(); return; } // por si el HTML no se actualizó todavía, no bloquear el acceso
+  modal.classList.remove('hidden');
+  const err = document.getElementById('mcp-error');
+  const btn = document.getElementById('mcpSaveBtn');
+  btn.onclick = async () => {
+    err.style.display = 'none';
+    const actual = document.getElementById('mcp-actual').value;
+    const nueva = document.getElementById('mcp-nueva').value;
+    const confirmar = document.getElementById('mcp-confirmar').value;
+    if (!actual || !nueva) { err.textContent = 'Completá los dos campos.'; err.style.display = ''; return; }
+    if (nueva.length < 6) { err.textContent = 'La contraseña nueva debe tener al menos 6 caracteres.'; err.style.display = ''; return; }
+    if (nueva !== confirmar) { err.textContent = 'Las contraseñas nuevas no coinciden.'; err.style.display = ''; return; }
+    btn.disabled = true; btn.textContent = 'Guardando…';
+    try {
+      await changePassword(actual, nueva);
+      modal.classList.add('hidden');
+      init();
+    } catch (e) {
+      err.textContent = e.message || 'Error al cambiar la contraseña.';
+      err.style.display = '';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Guardar y entrar';
+    }
+  };
+}
+
+if (user.mustChangePassword) {
+  showMustChangePasswordModal();
+} else {
+  init();
+}
+
+// ══════════════════════════════════════════════════════════════
+// APP "CALENDARIO DE CONTENIDOS" -- agregados sobre el panel del Hub
+// (Mis cuentas + métricas por mes con gráficos)
+// ══════════════════════════════════════════════════════════════
+const CUENTAS_DEF = [
+  { key: 'instagram', label: 'Instagram', ph: 'tuusuario (sin @)' },
+  { key: 'facebook', label: 'Facebook', ph: 'Nombre de tu página' },
+  { key: 'tiktok', label: 'TikTok', ph: 'tuusuario (sin @)' },
+  { key: 'youtube', label: 'YouTube', ph: 'Nombre de tu canal' },
+  { key: 'linkedin', label: 'LinkedIn', ph: 'Tu perfil o empresa' },
+  { key: 'twitter', label: 'Twitter / X', ph: 'tuusuario (sin @)' },
+];
+
+function renderCuentas(container) {
+  const cl = STATE.client || {};
+  container.innerHTML = `
+    <div class="card" style="max-width:640px;">
+      <div class="card-header"><h2>${ico('at-sign', 'azul', 18)} Mis cuentas</h2></div>
+      <div class="card-body">
+        <p style="font-size:13px;color:var(--text-secondary,#64748b);margin:0 0 14px;">Cargalas una sola vez. Después, el formulario de contenido te las trae siempre para elegir.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
+          ${CUENTAS_DEF.map(c => `<div class="form-group"><label>${c.label}</label>
+            <input class="form-control" id="cta-${c.key}" value="${(cl[c.key] || '').toString().replace(/"/g, '&quot;')}" placeholder="${c.ph}" autocapitalize="none" autocorrect="off"></div>`).join('')}
+        </div>
+        <div style="margin-top:16px;"><button class="btn btn-primary" id="cta-save" style="min-height:44px;">Guardar mis cuentas</button>
+        <span id="cta-ok" style="display:none;margin-left:10px;color:#15803d;font-size:13px;">✓ Guardadas</span></div>
+      </div>
+    </div>
+    <div class="card" style="max-width:640px;margin-top:16px;" id="mi-suscripcion"></div>`;
+  renderMiSuscripcion();
+  refreshIcons();
+  document.getElementById('cta-save').onclick = async () => {
+    const upd = {};
+    CUENTAS_DEF.forEach(c => { upd[c.key] = document.getElementById('cta-' + c.key).value.trim().replace(/^@/, ''); });
+    await saveClientData(clientId, upd);
+    STATE.client = { ...STATE.client, ...upd };
+    const ok = document.getElementById('cta-ok'); ok.style.display = ''; setTimeout(() => ok.style.display = 'none', 2500);
+  };
+}
+
+// ── Métricas por mes + gráficos simples ──────────────────────
+const MINI_METRICAS = [
+  { key: 'seguidores_ig', label: 'Seguidores', icon: 'users', color: 'azul' },
+  { key: 'alcance_mensual', label: 'Alcance', icon: 'radio', color: 'rojo' },
+  { key: 'interacciones', label: 'Interacciones', icon: 'heart', color: 'rojo' },
+  { key: 'publicaciones', label: 'Publicaciones', icon: 'clipboard-list', color: 'azul' },
+  { key: 'visitas_perfil', label: 'Visitas al perfil', icon: 'user-round', color: 'azul' },
+  { key: 'clics_link', label: 'Clics en el link', icon: 'link-2', color: 'rojo' },
+];
+let _metMes = new Date().toISOString().slice(0, 7);
+const _mesCorto = k => new Date(k + '-01T00:00:00').toLocaleDateString('es-AR', { month: 'short' }).replace('.', '');
+
+function miniChart(titulo, serie, color = 'azul', icono = '') { // serie: [{k, v}]
+  const pts = serie.filter(p => p.v !== undefined && p.v !== '' && !isNaN(+p.v));
+  if (!pts.length) return `<div class="card"><div class="card-body"><strong style="font-size:13px;">${icono} ${titulo}</strong><p style="font-size:12px;color:#64748b;margin:8px 0 0;">Sin datos todavía.</p></div></div>`;
+  const W = 320, H = 150, pl = 8, pr = 8, pt = 22, pb = 24;
+  const vals = pts.map(p => +p.v), max = Math.max(...vals) || 1;
+  const bw = (W - pl - pr) / pts.length;
+  const bars = pts.map((p, i) => {
+    const hh = Math.max(2, (+p.v / max) * (H - pt - pb)), x = pl + i * bw + bw * .18, w = bw * .64, y = H - pb - hh;
+    return `<rect x="${x}" y="${y}" width="${w}" height="${hh}" rx="4" style="fill:var(--ico-${color});"></rect>
+      <text x="${x + w / 2}" y="${y - 5}" text-anchor="middle" font-size="10" fill="currentColor">${fmtNum(p.v)}</text>
+      <text x="${x + w / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65">${_mesCorto(p.k)}</text>`;
+  }).join('');
+  const ult = vals[vals.length - 1], pen = vals.length > 1 ? vals[vals.length - 2] : null;
+  const delta = pen ? Math.round((ult - pen) / pen * 100) : null;
+  return `<div class="card"><div class="card-body">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;"><strong style="font-size:13px;">${icono} ${titulo}</strong>
+    ${delta !== null ? `<span style="font-size:12px;color:${delta >= 0 ? '#15803d' : '#b91c1c'};">${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta)}% vs. mes anterior</span>` : ''}</div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;margin-top:6px;" role="img" aria-label="${titulo}">${bars}</svg></div></div>`;
+}
+
+function renderMetricasContenidos(container) {
+  STATE.metricas = STATE.metricas || {};
+  const hist = STATE.metricas.historial = STATE.metricas.historial || {};
+  const meses = Object.keys(hist).sort();
+  const cur = hist[_metMes] || {};
+  container.innerHTML = `
+    <div class="card" style="margin-bottom:16px;"><div class="card-header"><h2>${ico('bar-chart-2', 'azul', 18)} Cargá tus números</h2></div><div class="card-body">
+      <p style="font-size:13px;color:var(--text-secondary,#64748b);margin:0 0 12px;">Elegí el mes, completá lo que tengas y guardá. Los gráficos se arman solos.</p>
+      <div class="form-group" style="max-width:220px;"><label>Mes</label><input type="month" class="form-control" id="met-mes" value="${_metMes}"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:6px;">
+        ${MINI_METRICAS.map(f => `<div class="form-group"><label style="font-size:12px;">${ico(f.icon, f.color, 14)} ${f.label}</label>
+          <input type="number" inputmode="numeric" min="0" class="form-control" id="met-${f.key}" value="${cur[f.key] ?? ''}" placeholder="0"></div>`).join('')}
+      </div>
+      <div style="margin-top:14px;"><button class="btn btn-primary" id="met-save" style="min-height:44px;">${ico('save', 'blanco')} Guardar métricas</button></div>
+    </div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+      ${MINI_METRICAS.slice(0, 4).map(f => miniChart(f.label, meses.map(k => ({ k, v: hist[k][f.key] })), f.color, ico(f.icon, f.color, 15))).join('')}
+    </div>
+    ${!meses.length ? '<div class="empty-state"><p>Cargá tus primeros números y mirá cómo se arman los gráficos.</p></div>' : ''}`;
+  refreshIcons();
+  document.getElementById('met-mes').onchange = e => { _metMes = e.target.value || _metMes; renderMetricasContenidos(container); };
+  document.getElementById('met-save').onclick = async () => {
+    const row = {};
+    MINI_METRICAS.forEach(f => { const v = document.getElementById('met-' + f.key).value; if (v !== '') row[f.key] = +v; });
+    hist[_metMes] = row;
+    const ult = Object.keys(hist).sort().pop();
+    Object.assign(STATE.metricas, hist[ult]);
+    await saveMetricasData(clientId, STATE.metricas);
+    renderMetricasContenidos(container);
+  };
+}
+
+// En mobile las acciones secundarias de la barra superior (plantilla,
+// importar, exportar, traer guion) van dentro de un menú "⋯" para que no
+// se corte la pantalla; el botón principal queda siempre a la vista.
+function compactarAccionesMobile(actions) {
+  if (window.innerWidth > 700) return;
+  const sec = [...actions.children].filter(el => !el.classList.contains('btn-primary') && el.tagName !== 'INPUT');
+  if (!sec.length) return;
+  actions.querySelectorAll('input').forEach(i => { i.style.width = '88px'; i.style.height = '32px'; i.style.minWidth = '0'; });
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:relative;';
+  const more = document.createElement('button');
+  more.className = 'btn btn-secondary'; more.textContent = '⋯'; more.setAttribute('aria-label', 'Más acciones');
+  more.style.cssText = 'min-width:34px;height:32px;min-height:32px;padding:0 8px;font-size:16px;line-height:1;';
+  const menu = document.createElement('div');
+  menu.style.cssText = 'display:none;position:fixed;left:8px;top:48px;z-index:60;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:6px;min-width:200px;flex-direction:column;gap:4px;';
+  sec.forEach(el => { el.style.cssText = 'display:block;width:100%;text-align:left;min-height:36px;'; menu.appendChild(el); });
+  more.onclick = e => {
+    e.stopPropagation();
+    const abrir = menu.style.display === 'none';
+    menu.style.display = abrir ? 'flex' : 'none';
+    if (abrir) {
+      const r = more.getBoundingClientRect();
+      menu.style.top = Math.round(r.bottom + 6) + 'px';
+      menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+    }
+  };
+  document.addEventListener('click', () => { menu.style.display = 'none'; });
+  wrap.appendChild(more); wrap.appendChild(menu);
+  actions.insertBefore(wrap, actions.firstChild);
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// Recorrido inicial + "Cómo se usa"
+// ══════════════════════════════════════════════════════════════
+function TOUR_APP_STEPS() {
+  const movil = window.innerWidth <= 768;
+  const nav = s => movil ? `.bnav-btn[data-section="${s}"]` : `.nav-item[data-section="${s}"]`;
+  return [
+    { selector: null, titulo: '¡Bienvenido/a a tu Calendario de contenidos!', texto: 'Acá organizás lo que publicás, guardás tus ideas y mirás cómo te va. Te mostramos todo en un minuto.' },
+    { selector: nav('contenidos'), titulo: 'Contenidos', texto: 'Tu banco de contenidos en lista, con su calendario. Tocá "+ Nuevo contenido" para cargar un post: título, fecha, estado, plataforma y copy.' },
+    { selector: '#cont-tabs [data-tab="ideas"]', titulo: 'Banco de ideas', texto: 'Anotá cada idea cuando se te ocurra. Después la pasás al calendario con un toque.' },
+    { selector: '#topbar-actions', titulo: 'Importar y exportar', texto: `Podés cargar muchos contenidos juntos con la plantilla de Excel y bajar todo cuando quieras.<div style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:8px 10px;background:rgba(26,77,170,.08);border-radius:8px;font-size:12.5px;">${ico('lightbulb', 'azul', 18)}<span><strong>Tip:</strong> también podés bajarte la plantilla y pedirle a la IA que la complete con tus ideas, respetando las instrucciones. Después la subís de forma masiva.</span></div>` },
+    { selector: nav('guiones'), titulo: 'Guiones', texto: 'Escribí el guion de tus videos y leelo en pantalla mientras grabás, con el teleprompter.' },
+    { selector: nav('cuentas'), titulo: 'Mis cuentas', texto: 'Cargá tus redes una sola vez. El formulario te las trae siempre.' },
+    { selector: nav('dashboard'), titulo: 'Dashboard', texto: 'Mirá cuánto publicaste, cuántos contenidos tenés en proceso y cómo vienen tus métricas.' },
+    { selector: null, titulo: '¡Listo!', texto: 'Cuando quieras volver a ver esta guía, entrá a "Cómo se usa".' },
+  ];
+}
+window.reiniciarTourApp = function() {
+  try { localStorage.removeItem('cal_tour_v1'); } catch (e) {}
+  iniciarTour(TOUR_APP_STEPS(), 'cal_tour_v1');
+};
+
+function renderInstrucciones(container) {
+  const bloques = [
+    { icon: 'pen-line', color: 'azul', t: 'Cargar un contenido', d: 'Tocá "+ Nuevo contenido", completá título, fecha, estado y plataforma, y guardá. Cambiás el estado desde la lista a medida que avanza.' },
+    { icon: 'calendar-days', color: 'rojo', t: 'Usar el calendario', d: 'Tocá un día para agregar un contenido. En el celular, cada punto de color es un contenido y el color indica su estado.' },
+    { icon: 'lightbulb', color: 'azul', t: 'Guardar ideas', d: 'Anotalas en el Banco de ideas, sumales links de referencia y usá "Pasar al calendario" cuando las quieras publicar.' },
+    { icon: 'download', color: 'rojo', t: 'Importar desde Excel', d: 'Descargá la plantilla, completala, subila con "Importar Excel" y revisá los cambios antes de confirmar.' },
+    { icon: 'upload', color: 'azul', t: 'Exportar', d: '"Exportar Excel" baja todo tu calendario con las mismas columnas de la plantilla.' },
+    { icon: 'monitor-play', color: 'rojo', t: 'Escribir y leer guiones', d: 'Creá el guion, vinculalo a un contenido y tocá el ícono de pantalla para leerlo con el teleprompter.' },
+    { icon: 'bar-chart-2', color: 'azul', t: 'Cargar métricas', d: 'En Contenidos, pestaña Métricas, elegí el mes, completá tus números y guardá. Los gráficos se arman solos.' },
+    { icon: 'archive', color: 'rojo', t: 'Archivar un mes', d: 'Con "Archivar mes" sacás del banco todos los contenidos de ese mes. Los encontrás en la pestaña Archivados, donde podés verlos o restaurarlos.' },
+    { icon: 'sparkles', color: 'rojo', t: 'La voz de tu marca', d: 'Para que la IA escriba con la voz de tu marca, configurala una sola vez en <a href="https://training.cosmart.com.ar/iaprincipiantes" target="_blank" rel="noopener" style="color:var(--ico-azul);font-weight:600;">IA para Emprendedores</a>.' },
+    { icon: 'lock', color: 'azul', t: 'Tus datos', d: 'Son solo tuyos. Nadie más los ve.' },
+  ];
+  container.innerHTML = `
+    <div style="max-width:780px;display:flex;flex-direction:column;gap:12px;">
+      <div style="display:flex;justify-content:flex-end;"><button class="btn btn-primary btn-sm" onclick="reiniciarTourApp()">${ico('play', 'blanco')} Ver el recorrido de nuevo</button></div>
+      ${bloques.map(b => `<div class="card"><div class="card-body" style="display:flex;gap:12px;align-items:flex-start;min-width:0;">
+        <span style="flex:none;margin-top:2px;">${ico(b.icon, b.color, 20)}</span>
+        <div style="min-width:0;"><div style="font-weight:700;font-size:14px;margin-bottom:2px;">${b.t}</div><div style="font-size:13px;color:var(--text-muted);line-height:1.5;">${b.d}</div></div>
+      </div></div>`).join('')}
+    </div>`;
+  refreshIcons();
+}
+
+// ══════════════════════════════════════════════════════════════
+// Archivar mes completo + pestaña Archivados
+// ══════════════════════════════════════════════════════════════
+const _plural = n => `${n} contenido${n === 1 ? '' : 's'}`;
+const _claveMes = c => (c.fechaPub || '').slice(0, 7) || 'sin-fecha';
+const _labelMes = k => k === 'sin-fecha' ? 'Sin fecha' : mesAnioLabel(k);
+
+function toastApp(msg) {
+  document.getElementById('toast-app')?.remove();
+  const t = document.createElement('div');
+  t.id = 'toast-app';
+  t.setAttribute('role', 'status');
+  t.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:84px;z-index:100000;background:#0D2B6B;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;max-width:calc(100vw - 32px);box-shadow:0 6px 18px rgba(0,0,0,.3);';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3800);
+}
+
+// Confirmación dentro de la pantalla (el visor no muestra confirm())
+function confirmarSheet(texto, okLabel, fn) {
+  document.getElementById('confirm-sheet')?.remove();
+  const o = document.createElement('div');
+  o.id = 'confirm-sheet';
+  o.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;';
+  o.innerHTML = `<div style="background:var(--surface);color:var(--text);width:100%;max-width:440px;border-radius:14px 14px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px));box-sizing:border-box;">
+    <p style="margin:0 0 14px;font-size:14px;line-height:1.45;">${texto}</p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+      <button type="button" class="btn btn-secondary" id="cs-no">Cancelar</button>
+      <button type="button" class="btn btn-primary btn-rojo" id="cs-si">${okLabel}</button></div></div>`;
+  document.body.appendChild(o);
+  o.addEventListener('click', e => { if (e.target === o) o.remove(); });
+  document.getElementById('cs-no').onclick = () => o.remove();
+  document.getElementById('cs-si').onclick = async () => { o.remove(); await fn(); };
+}
+
+async function cambiarArchivadoMes(clave, archivar) {
+  const items = STATE.contenidos.filter(c => _claveMes(c) === clave && !!c.archivado !== archivar);
+  if (!items.length) return;
+  await updateContenidosBulk(clientId, items.map(c => ({ id: c.id, archivado: archivar })));
+  items.forEach(c => { c.archivado = archivar; });
+  toastApp(archivar ? `Mes archivado: ${_plural(items.length)}. Lo encontrás en Archivados.` : `Mes restaurado: ${_plural(items.length)}.`);
+  renderContTab(activeContTab);
+}
+
+window.pedirArchivarMes = function(clave, label) {
+  const n = STATE.contenidos.filter(c => _claveMes(c) === clave && !c.archivado).length;
+  if (!n) return;
+  confirmarSheet(`¿Archivar los ${_plural(n)} de ${label}? Los podés recuperar desde Archivados.`, 'Sí, archivar', () => cambiarArchivadoMes(clave, true));
+};
+window.pedirRestaurarMes = function(clave) {
+  const n = STATE.contenidos.filter(c => _claveMes(c) === clave && c.archivado).length;
+  if (!n) return;
+  confirmarSheet(`¿Restaurar los ${_plural(n)} de ${_labelMes(clave)}?`, 'Sí, restaurar', () => cambiarArchivadoMes(clave, false));
+};
+
+let _archBusqueda = '';
+const _archMostrados = {};
+const ARCH_PAGINA = 20;
+
+function archItemHtml(c) {
+  return `<div class="arch-item" onclick="openContenidoModalById('${c.id}')">
+    <div class="arch-item-info"><span class="arch-item-fecha">${c.fechaPub ? fmtDate(c.fechaPub) : 'Sin fecha'}</span><span class="arch-item-titulo">${escapeHtml(c.titulo || '')}</span></div>
+    <button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();desarchivarContenido('${c.id}')">${ico('archive-restore', 'azul', 14)} Restaurar</button>
+  </div>`;
+}
+
+function renderArchivadoMesBody(det) {
+  const clave = det.dataset.clave;
+  const q = _archBusqueda.toLowerCase();
+  const lista = STATE.contenidos.filter(c => c.archivado && _claveMes(c) === clave && (!q || (c.titulo || '').toLowerCase().includes(q)))
+    .sort((a, b) => (b.fechaPub || '') < (a.fechaPub || '') ? -1 : 1);
+  const mostrar = _archMostrados[clave] || ARCH_PAGINA;
+  const resto = lista.length - mostrar;
+  det.querySelector('.arch-body').innerHTML = lista.slice(0, mostrar).map(archItemHtml).join('') +
+    (resto > 0 ? `<button type="button" class="btn btn-secondary btn-sm arch-mas" onclick="archVerMas('${clave}')">Ver más (${resto} restantes)</button>` : '');
+  refreshIcons();
+}
+window.archVerMas = function(clave) {
+  _archMostrados[clave] = (_archMostrados[clave] || ARCH_PAGINA) + ARCH_PAGINA;
+  const det = document.querySelector(`.arch-mes[data-clave="${clave}"]`);
+  if (det) renderArchivadoMesBody(det);
+};
+
+function renderArchivados(container) {
+  const q = _archBusqueda.toLowerCase();
+  const arch = STATE.contenidos.filter(c => c.archivado);
+  const grupos = new Map();
+  arch.filter(c => !q || (c.titulo || '').toLowerCase().includes(q)).forEach(c => {
+    const k = _claveMes(c);
+    if (!grupos.has(k)) grupos.set(k, 0);
+    grupos.set(k, grupos.get(k) + 1);
+  });
+  const claves = [...grupos.keys()].sort((a, b) => a === 'sin-fecha' ? 1 : b === 'sin-fecha' ? -1 : b.localeCompare(a));
+  container.innerHTML = `
+    <div style="margin-bottom:12px;">
+      <h3 style="font-size:15px;font-weight:600;margin:0 0 4px;">Contenidos archivados</h3>
+      <p style="font-size:12.5px;color:var(--text-muted);margin:0;">Acá están los meses que archivaste. Abrí uno para ver sus contenidos o restauralo completo.</p>
+    </div>
+    ${arch.length ? `<input type="search" id="arch-q" class="form-control" placeholder="Buscar en archivados…" value="${escapeHtml(_archBusqueda)}" style="margin-bottom:12px;max-width:100%;">` : ''}
+    ${claves.length ? claves.map(k => `
+      <details class="arch-mes" data-clave="${k}" ${q ? 'open' : ''}>
+        <summary class="arch-mes-head"><span class="arch-mes-t">${_labelMes(k)} · ${_plural(grupos.get(k))}</span>
+          <span class="arch-mes-acc"><button type="button" class="btn btn-secondary btn-sm" onclick="event.preventDefault();event.stopPropagation();pedirRestaurarMes('${k}')">${ico('archive-restore', 'azul', 14)} Restaurar mes</button></span></summary>
+        <div class="arch-body"></div>
+      </details>`).join('') : `<div class="empty-state"><p>${arch.length ? 'Sin resultados.' : 'Todavía no archivaste nada.'}</p></div>`}`;
+  container.querySelectorAll('.arch-mes').forEach(det => {
+    det.addEventListener('toggle', () => { if (det.open) renderArchivadoMesBody(det); });
+    if (det.open) renderArchivadoMesBody(det);
+  });
+  const qi = document.getElementById('arch-q');
+  if (qi) qi.addEventListener('input', e => { _archBusqueda = e.target.value.trim(); Object.keys(_archMostrados).forEach(k => delete _archMostrados[k]); renderArchivados(container); const n = document.getElementById('arch-q'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); });
+  refreshIcons();
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// Mi suscripción (en Mis cuentas)
+// ══════════════════════════════════════════════════════════════
+const _fechaLarga = ms => new Date(ms).toLocaleDateString('es-AR', { day: 'numeric', month: 'long', year: 'numeric' });
+
+function renderMiSuscripcion() {
+  const box = document.getElementById('mi-suscripcion');
+  const s = (window.CUENTA && window.CUENTA.suscripcion) || null;
+  if (!box || !s) return;
+  const plan = s.plan === 'anual' ? 'Plan anual' : 'Plan mensual';
+  let estado = '';
+  if (s.estado === 'trial') estado = `En prueba gratis hasta el ${_fechaLarga(s.trialHasta)}. Después se cobra solo.`;
+  else if (s.estado === 'activa') estado = `Activa. Se renueva cerca del ${_fechaLarga(s.hasta - 3 * 86400000)}.`;
+  else if (s.estado === 'baja') estado = `Cancelada. Podés usar la app hasta el ${_fechaLarga(s.hasta)}.`;
+  const medio = s.medio === 'paypal' ? 'PayPal' : 'Mercado Pago';
+  box.innerHTML = `
+    <div class="card-header"><h2>${ico('credit-card', 'azul', 18)} Mi suscripción</h2></div>
+    <div class="card-body">
+      <p style="margin:0 0 4px;font-weight:700;">${plan} · ${medio}</p>
+      <p style="margin:0 0 14px;font-size:13px;color:var(--text-muted);">${estado}</p>
+      ${s.renueva ? `<button type="button" class="btn btn-secondary" id="sus-baja" style="min-height:40px;">Cancelar suscripción</button>` : ''}
+      <span id="sus-msg" style="display:block;margin-top:8px;font-size:13px;"></span>
+    </div>`;
+  refreshIcons();
+  document.getElementById('sus-baja')?.addEventListener('click', () => {
+    const hasta = s.estado === 'trial' ? s.trialHasta : s.hasta;
+    confirmarSheet(`¿Cancelar tu suscripción? Vas a poder seguir usando la app hasta el ${_fechaLarga(hasta)}.`, 'Sí, cancelar', async () => {
+      try {
+        const r = await llamar('POST', '/api/apps/baja');
+        window.CUENTA = { ...window.CUENTA, suscripcion: r.suscripcion };
+        renderMiSuscripcion();
+        toastApp('Suscripción cancelada.');
+      } catch (e) {
+        const m = document.getElementById('sus-msg'); if (m) { m.textContent = e.message; m.style.color = '#b91c1c'; }
+      }
+    });
+  });
+}
