@@ -3831,7 +3831,7 @@ function closeImportModal() {
 // para hacer modificaciones masivas afuera y volver a subirlo. Mismas
 // columnas y mismo orden que la plantilla de importación, para que el
 // archivo exportado se pueda volver a importar sin tocar encabezados.
-const EXPORT_CONTENIDOS_HEADERS = ['Título del contenido', 'Fecha de publicación', 'Estado', 'Cuenta', 'Plataformas', 'Ubicación', 'Formato', 'Dimensiones', 'Eje de comunicación', 'Tipo de contenido', 'Objetivo', 'Copy', 'Texto en pantalla', 'Prompt sugerido para IA', 'Sugerencia de pieza creativa', 'Guion', 'Pauta', 'Link pieza terminada', 'Link material de referencia', 'Notas internas', 'Asignado a'];
+const EXPORT_CONTENIDOS_HEADERS = ['Título del contenido', 'Fecha de publicación', 'Estado', 'Cuenta', 'Plataformas', 'Ubicación', 'Formato', 'Dimensiones', 'Eje de comunicación', 'Tipo de contenido', 'Objetivo', 'Copy', 'Texto en pantalla', 'Prompt sugerido para IA', 'Sugerencia de pieza creativa', 'Guion', 'Link pieza terminada', 'Link material de referencia', 'Notas internas'];
 
 function contenidoAFilaExport(c) {
   return [
@@ -3851,11 +3851,9 @@ function contenidoAFilaExport(c) {
     c.promptIA || '',
     c.sugerenciaVisual || '',
     c.guion || '',
-    EXPORT_PAUTA_LABEL[c.pauta] || '',
     (c.linkDrive || []).join(', '),
     (c.linkDriveRef || []).join(', '),
     c.notas || '',
-    c.asignado ? (c.asignado.nombre || c.asignado.email) : '',
   ];
 }
 
@@ -3935,7 +3933,7 @@ async function exportarContenidosExcel() {
   await loadXLSXLib();
   const aoa = [EXPORT_CONTENIDOS_HEADERS, ...STATE.contenidos.map(contenidoAFilaExport)];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = EXPORT_CONTENIDOS_HEADERS.map((h, i) => ({ wch: [30, 14, 12, 14, 16, 14, 12, 12, 18, 16, 12, 40, 40, 40, 40, 40, 18, 28, 28, 30, 20][i] || 16 }));
+  ws['!cols'] = EXPORT_CONTENIDOS_HEADERS.map((h, i) => ({ wch: [30, 14, 12, 14, 16, 14, 12, 12, 18, 16, 12, 40, 40, 40, 40, 40, 28, 28, 30][i] || 16 }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Contenidos');
   const nombreCliente = (STATE.client?.nombre || STATE.client?.name || clientId || 'cliente').replace(/[^a-z0-9]+/gi, '_');
