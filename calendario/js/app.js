@@ -1,4 +1,5 @@
 import { requireAuth, logoutUser, changePassword, obtenerCuenta, llamar } from './auth.js';
+import { invitarInstalar, abrirInstalar, puedeInstalar } from './instalar.js';
 import { montarPlay, detenerPlay, armarNarracionReporte, armarNarracionDashboard } from './play.js';
 import {
   getClientData, saveClientData, getContenidos, saveContenido, deleteContenido, saveContenidosBulk, updateContenidosBulk,
@@ -68,13 +69,14 @@ function iniciarTour(steps, storageKey) {
     const step = steps[i];
     const el = step.selector ? document.querySelector(step.selector) : null;
     overlay.innerHTML = '';
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'auto' }); // primero se acomoda y después se mide, así el recuadro cae justo
     let rect = el ? el.getBoundingClientRect() : { top: window.innerHeight / 2 - 20, left: window.innerWidth / 2 - 100, width: 200, height: 40, bottom: window.innerHeight / 2 + 20 };
-    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
     const spot = document.createElement('div');
     spot.style.cssText = `position:fixed;top:${rect.top-6}px;left:${rect.left-6}px;width:${rect.width+12}px;height:${rect.height+12}px;border-radius:10px;box-shadow:0 0 0 9999px rgba(13,43,107,.6);border:2px solid #3A8FC7;pointer-events:none;`;
     overlay.appendChild(spot);
     const card = document.createElement('div');
-    const top = Math.max(16, Math.min(rect.bottom + 14, window.innerHeight - 200));
+    // La tarjeta va debajo de lo señalado; si lo señalado está en la mitad de abajo (ej. el menú inferior del celular), va arriba para no taparlo.
+    const top = el && rect.top > window.innerHeight * 0.55 ? Math.max(16, rect.top - 250) : Math.max(16, Math.min(rect.bottom + 14, window.innerHeight - 250));
     const left = Math.max(16, Math.min(rect.left, window.innerWidth - 316));
     card.style.cssText = `position:fixed;top:${top}px;left:${left}px;width:280px;background:#fff;border-radius:10px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.3);`;
     card.innerHTML = `
@@ -290,7 +292,12 @@ async function init() {
       renderSection('contenidos');
     }
     setTimeout(() => refreshIcons(), 100);
-    setTimeout(() => iniciarTour(TOUR_APP_STEPS(), 'cal_tour_v1'), 900);
+    setTimeout(() => {
+      // Primera vez: primero la invitación a instalar la app y, al cerrarla, el recorrido.
+      const tour = () => iniciarTour(TOUR_APP_STEPS(), 'cal_tour_v1');
+      if (!invitarInstalar(tour)) tour();
+      iniciarOfertaPrueba();
+    }, 900);
     // Avisa a admin/index.html (el padre del iframe) que ya terminó de
     // pintar -- así la pantalla de carga con la brújula desaparece recién
     // cuando hay contenido real, no antes (Vaneh, 11/10: no quería ni el
@@ -1983,6 +1990,24 @@ function matchPautaFilter(c) {
   return p === 'dark' || p === 'dark-organico';
 }
 
+// Mientras la persona no cargó nada, se muestra un contenido de EJEMPLO (solo visual, no se guarda ni se puede tocar)
+// para que vea cómo queda la lista cuando ya tiene contenido cargado.
+function ejemploContenidoHtml() {
+  const d = new Date(); d.setDate(d.getDate() + 3);
+  const ej = { id: '__ejemplo', titulo: 'Reel: 3 errores que cometés al empezar a vender', estado: 'Programado', plataformas: ['Instagram'], formato: 'Reel', eje: 'Educativo',
+    fechaPub: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` };
+  return `
+    <div id="cont-ejemplo" style="position:relative;">
+      <p style="font-size:12.5px;color:var(--text-muted);margin:0 0 10px;"><strong style="background:var(--rojo,#F80808);color:#fff;border-radius:999px;padding:2px 9px;font-size:11px;margin-right:6px;">Ejemplo</strong>Así se ve un contenido cargado. Desaparece cuando cargues el tuyo.</p>
+      <div style="pointer-events:none;user-select:none;opacity:.9;">
+        <div class="banco-cards-mobile">${bancoCardHtml(ej)}</div>
+        <div class="banco-table-desktop"><div class="table-wrapper"><table class="data-table">
+          <thead><tr><th>Fecha pub.</th><th>Título</th><th>Pauta</th><th>Plataforma</th><th>Estado</th><th>Formato</th><th>Eje</th><th>Drive</th><th>Notas</th><th></th></tr></thead>
+          <tbody>${bancoRowHtml(ej)}</tbody></table></div></div>
+      </div>
+    </div>`;
+}
+
 function renderBancoContenidos(container) {
   const activos = STATE.contenidos.filter(c => !c.archivado).filter(matchPautaFilter)
     .filter(c => _bancoFiltroPlataforma === 'todas' || (c.plataformas || []).includes(_bancoFiltroPlataforma))
@@ -2043,7 +2068,7 @@ function renderBancoContenidos(container) {
 
   container.innerHTML = `
     ${filtrosHtml}
-    ${all.length ? sinFechaHtml + aniosHtml : `<div class="empty-state"><p>${hayAlgunContenido?'Sin contenidos con este filtro.':'Sin contenidos aún.'}</p></div>`}
+    ${all.length ? sinFechaHtml + aniosHtml : (hayAlgunContenido ? `<div class="empty-state"><p>Sin contenidos con este filtro.</p></div>` : ejemploContenidoHtml())}
   `;
 }
 
@@ -7910,9 +7935,9 @@ function TOUR_APP_STEPS() {
   const nav = s => movil ? `.bnav-btn[data-section="${s}"]` : `.nav-item[data-section="${s}"]`;
   return [
     { selector: null, titulo: '¡Bienvenido/a a tu Calendario de contenidos!', texto: 'Acá organizás lo que publicás, guardás tus ideas y mirás cómo te va. Te mostramos todo en un minuto.' },
-    { selector: nav('contenidos'), titulo: 'Contenidos', texto: 'Tu banco de contenidos en lista, con su calendario. Tocá "+ Nuevo contenido" para cargar un post: título, fecha, estado, plataforma y copy.' },
+    { selector: '#cont-tabs', titulo: 'Contenidos', texto: 'Tu banco de contenidos en lista, con su calendario. Tocá "+ Nuevo contenido" para cargar un post: título, fecha, estado, plataforma y copy.' },
     { selector: '#cont-tabs [data-tab="ideas"]', titulo: 'Banco de ideas', texto: 'Anotá cada idea cuando se te ocurra. Después la pasás al calendario con un toque.' },
-    { selector: '#topbar-actions', titulo: 'Importar y exportar', texto: `Podés cargar muchos contenidos juntos con la plantilla de Excel y bajar todo cuando quieras.<div style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:8px 10px;background:rgba(26,77,170,.08);border-radius:8px;font-size:12.5px;">${ico('lightbulb', 'azul', 18)}<span><strong>Tip:</strong> también podés bajarte la plantilla y pedirle a la IA que la complete con tus ideas, respetando las instrucciones. Después la subís de forma masiva.</span></div>` },
+    { selector: '.excel-bar', titulo: 'Importar y exportar', texto: `Podés cargar muchos contenidos juntos con la plantilla de Excel y bajar todo cuando quieras.<div style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:8px 10px;background:rgba(26,77,170,.08);border-radius:8px;font-size:12.5px;">${ico('lightbulb', 'azul', 18)}<span><strong>Tip:</strong> también podés bajarte la plantilla y pedirle a la IA que la complete con tus ideas, respetando las instrucciones. Después la subís de forma masiva.</span></div>` },
     { selector: nav('guiones'), titulo: 'Guiones', texto: 'Escribí el guion de tus videos y leelo en pantalla mientras grabás, con el teleprompter.' },
     { selector: nav('cuentas'), titulo: 'Mis cuentas', texto: 'Cargá tus redes una sola vez. El formulario te las trae siempre.' },
     { selector: nav('dashboard'), titulo: 'Dashboard', texto: 'Mirá cuánto publicaste, cuántos contenidos tenés en proceso y cómo vienen tus métricas.' },
@@ -7945,6 +7970,13 @@ function renderInstrucciones(container) {
         <div style="min-width:0;"><div style="font-weight:700;font-size:14px;margin-bottom:2px;">${b.t}</div><div style="font-size:13px;color:var(--text-muted);line-height:1.5;">${b.d}</div></div>
       </div></div>`).join('')}
     </div>`;
+  if (puedeInstalar()) {
+    const w = document.createElement('div');
+    w.style.cssText = 'max-width:640px;margin-top:12px;';
+    w.innerHTML = `<button type="button" class="btn btn-secondary" id="btn-instalar-app" style="min-height:44px;">${ico('smartphone', 'azul', 18)} Instalar la app en el celular</button>`;
+    container.appendChild(w);
+    w.querySelector('#btn-instalar-app').onclick = () => abrirInstalar();
+  }
   refreshIcons();
 }
 
@@ -7954,6 +7986,82 @@ function renderInstrucciones(container) {
 const _plural = n => `${n} contenido${n === 1 ? '' : 's'}`;
 const _claveMes = c => (c.fechaPub || '').slice(0, 7) || 'sin-fecha';
 const _labelMes = k => k === 'sin-fecha' ? 'Sin fecha' : mesAnioLabel(k);
+
+// ══════════════════════════════════════════════════════════════
+// Prueba gratis sin tarjeta: aviso con los días que quedan + ventana de oferta a los 3 minutos de uso
+// ══════════════════════════════════════════════════════════════
+const _diasPrueba = s => Math.max(1, Math.ceil((Number(s.pruebaHasta) - Date.now()) / 86400000));
+function iniciarOfertaPrueba() {
+  const s = window.CUENTA && window.CUENTA.suscripcion;
+  if (!s || s.estado !== 'prueba') return;
+  const main = document.querySelector('.main');
+  if (main && !document.getElementById('aviso-prueba-app')) {
+    const d = _diasPrueba(s);
+    const bar = document.createElement('div');
+    bar.id = 'aviso-prueba-app';
+    bar.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;background:#0D2B6B;color:#fff;font-size:13px;padding:6px 12px;text-align:center;';
+    bar.innerHTML = `<span>${d === 1 ? 'Te queda 1 día de prueba' : `Te quedan ${d} días de prueba`}</span><a href="suscripcion.html" style="color:#fff;font-weight:700;text-decoration:underline;">Suscribirme</a>`;
+    main.insertBefore(bar, main.firstChild);
+  }
+  // A los 3 minutos de uso, una vez por visita (si hay otro cartel abierto, reintenta en 30 s).
+  let yaVista = false; try { yaVista = !!sessionStorage.getItem('cal_oferta_sess'); } catch (e) {}
+  if (yaVista) return;
+  const intentar = () => {
+    if (document.getElementById('tour-overlay') || document.getElementById('instalar-modal')) return setTimeout(intentar, 30000);
+    try { sessionStorage.setItem('cal_oferta_sess', '1'); } catch (e) {}
+    mostrarOfertaPrueba();
+  };
+  setTimeout(intentar, 3 * 60 * 1000);
+}
+function mostrarOfertaPrueba() {
+  const s = window.CUENTA && window.CUENTA.suscripcion;
+  if (!s || s.estado !== 'prueba' || document.getElementById('oferta-modal')) return;
+  const p = s.precios;
+  const usd = n => `USD ${n}`;
+  const ov = document.createElement('div');
+  ov.id = 'oferta-modal';
+  ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true'); ov.setAttribute('aria-labelledby', 'of-titulo');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(6,15,34,.72);display:flex;align-items:center;justify-content:center;padding:16px;';
+  ov.innerHTML = `
+    <style>
+      #oferta-modal .of-card{background:#fff;color:#1e293b;border-radius:14px;max-width:440px;width:100%;max-height:calc(100vh - 32px);overflow:auto;padding:22px 18px;box-shadow:0 12px 40px rgba(0,0,0,.35);font-family:'DM Sans',system-ui,sans-serif;}
+      #oferta-modal h2{margin:0 0 8px;font-size:20px;font-family:'Playfair Display',Georgia,serif;color:#0D2B6B;}
+      #oferta-modal p{margin:0 0 10px;font-size:14px;line-height:1.5;color:#475569;}
+      #oferta-modal ul{margin:0 0 12px;padding-left:18px;font-size:13.5px;line-height:1.6;color:#334155;}
+      #oferta-modal .of-precio{background:#eef3ff;border-radius:10px;padding:10px 12px;font-size:13.5px;line-height:1.55;color:#0D2B6B;margin-bottom:6px;}
+      #oferta-modal .of-precio s{color:#64748b;}
+      #oferta-modal .of-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}
+      #oferta-modal .of-btns a,#oferta-modal .of-btns button{min-height:44px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;padding:0 18px;flex:1 1 auto;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;font-family:inherit;}
+      #oferta-modal a:focus-visible,#oferta-modal button:focus-visible{outline:3px solid #8DB8FF;outline-offset:2px;}
+      #oferta-modal .of-ok{background:#F80808;color:#fff;border:none;}
+      #oferta-modal .of-no{background:#fff;color:#1A4DAA;border:2px solid #1A4DAA;}
+    </style>
+    <div class="of-card">
+      <h2 id="of-titulo">Tu calendario ya está en marcha</h2>
+      <p>Estás usando la prueba gratis. Si te sirve, suscribite ahora y seguís sin cortes cuando termine: tus ideas, guiones y contenidos quedan guardados.</p>
+      <ul>
+        <li>Calendario, banco de ideas y de contenidos</li>
+        <li>Guiones con teleprompter</li>
+        <li>Dashboard y métricas cargadas por vos</li>
+        <li>Excel: plantilla, importar y exportar</li>
+      </ul>
+      <div class="of-precio">${p.mensualLista ? `
+        Precio regular: <s>${usd(p.mensualLista.usd)} por mes</s> o <s>${usd(p.anualLista.usd)} por año</s>.<br>
+        <strong>Si te suscribís ahora: ${usd(p.mensual.usd)} por mes o ${usd(p.anual.usd)} por año.</strong>` : `<strong>${usd(p.mensual.usd)} por mes o ${usd(p.anual.usd)} por año.</strong>`}
+      </div>
+      <p style="font-size:12.5px;margin:0;">Cancelás cuando quieras.</p>
+      <div class="of-btns">
+        <a class="of-ok" href="suscripcion.html">Ver planes</a>
+        <button type="button" class="of-no" id="of-cerrar">Seguir probando</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const cerrar = () => ov.remove();
+  ov.querySelector('#of-cerrar').onclick = cerrar;
+  ov.addEventListener('click', e => { if (e.target === ov) cerrar(); });
+  ov.querySelector('#of-cerrar').focus();
+}
+window.mostrarOfertaPrueba = mostrarOfertaPrueba;
 
 function toastApp(msg) {
   document.getElementById('toast-app')?.remove();
@@ -8072,6 +8180,16 @@ function renderMiSuscripcion() {
   const box = document.getElementById('mi-suscripcion');
   const s = (window.CUENTA && window.CUENTA.suscripcion) || null;
   if (!box || !s) return;
+  if (s.estado === 'prueba') {
+    box.innerHTML = `
+      <div class="card-header"><h2>${ico('credit-card', 'azul', 18)} Mi suscripción</h2></div>
+      <div class="card-body">
+        <p style="margin:0 0 4px;font-weight:700;">Prueba gratis</p>
+        <p style="margin:0 0 14px;font-size:13px;color:var(--text-muted);">Hasta el ${_fechaLarga(s.pruebaHasta)}.</p>
+        <a class="btn btn-primary" href="suscripcion.html" style="min-height:40px;display:inline-flex;align-items:center;">Suscribirme</a>
+      </div>`;
+    return;
+  }
   const plan = s.plan === 'anual' ? 'Plan anual' : 'Plan mensual';
   let estado = '';
   if (s.estado === 'trial') estado = `En prueba gratis hasta el ${_fechaLarga(s.trialHasta)}. Después se cobra solo.`;

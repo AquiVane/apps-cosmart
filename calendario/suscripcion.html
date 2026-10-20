@@ -58,10 +58,10 @@ const precios = () => cuenta.suscripcion.precios;
 
 function pintarPlanes() {
   const p = precios();
-  $('plan-mensual').innerHTML = `<div class="p-nombre">Mensual</div><div class="p-usd">USD ${p.mensual.usd} <small>por mes</small></div><div class="p-ars">Aprox. ${pesos(p.mensual.ars)} por mes al dólar de hoy</div>`;
-  const regalo = p.regaloVigente;
-  $('plan-anual').innerHTML = `<div class="p-nombre">Anual</div><div class="p-usd">USD ${p.anual.usd} <small>por año</small></div><div class="p-ars">Aprox. ${pesos(p.anual.ars)} por año al dólar de hoy</div>` +
-    (regalo ? `<span class="p-regalo">1 mes de regalo</span><div class="p-nota">Elegilo hasta el ${fecha(p.regaloVence)} y pagás 11 meses en vez de 12.</div>` : `<div class="p-nota">12 meses.</div>`);
+  const of = p.regaloVigente && !!p.mensualLista; // solo con el backend que manda el precio regular // oferta vigente: precio de oferta con el regular tachado
+  const nota = of ? `<span class="p-regalo">Precio de oferta</span><div class="p-nota">Hasta el ${fecha(p.regaloVence)}. Después vale USD %L%.</div>` : '';
+  $('plan-mensual').innerHTML = `<div class="p-nombre">Mensual</div>${of ? `<div class="p-ars"><s>USD ${p.mensualLista.usd} por mes</s></div>` : ''}<div class="p-usd">USD ${p.mensual.usd} <small>por mes</small></div><div class="p-ars">Aprox. ${pesos(p.mensual.ars)} por mes al dólar de hoy</div>` + nota.replace('%L%', p.mensualLista.usd);
+  $('plan-anual').innerHTML = `<div class="p-nombre">Anual</div>${of ? `<div class="p-ars"><s>USD ${p.anualLista.usd} por año</s></div>` : ''}<div class="p-usd">USD ${p.anual.usd} <small>por año</small></div><div class="p-ars">Aprox. ${pesos(p.anual.ars)} por año al dólar de hoy</div>` + nota.replace('%L%', p.anualLista.usd);
   $('plan-mensual').setAttribute('aria-pressed', plan === 'mensual');
   $('plan-anual').setAttribute('aria-pressed', plan === 'anual');
 }
