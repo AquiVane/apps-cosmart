@@ -1,0 +1,17 @@
+{
+  "name": "Calendario de contenidos · COSMART",
+  "short_name": "Calendario",
+  "description": "Organizá tus contenidos: calendario, ideas, guiones, materiales y métricas en una sola aplicación.",
+  "id": "/calendario/app.html",
+  "start_url": "/calendario/app.html",
+  "scope": "/calendario/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#060F22",
+  "theme_color": "#060F22",
+  "lang": "es-AR",
+  "icons": [
+    { "src": "/calendario/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/calendario/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

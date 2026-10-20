@@ -12,10 +12,11 @@
   <link rel="icon" type="image/png" sizes="192x192" href="favicon-cosmart.png?v=2">
   <link rel="icon" type="image/png" sizes="512x512" href="favicon-cosmart.png?v=2">
   <meta name="theme-color" content="#060F22">
-  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Hub COSMART">
+  <meta name="apple-mobile-web-app-title" content="Calendario">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
@@ -1392,5 +1393,6 @@
     if (window.lucide) lucide.createIcons();
   });
 </script>
+<script>if("serviceWorker"in navigator)addEventListener("load",function(){navigator.serviceWorker.register("sw.js",{scope:"./"}).catch(function(){});});</script>
 </body>
 </html>
