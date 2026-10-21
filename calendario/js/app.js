@@ -239,7 +239,7 @@ async function init() {
     }
 
     // Logo upload
-    document.getElementById('client-logo-input').addEventListener('change', async e => {
+    document.getElementById('client-logo-input')?.addEventListener('change', async e => { // (esta app no tiene logo de empresa)
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
@@ -536,6 +536,7 @@ function applyClientLogo(src) {
   const placeholder = document.getElementById('sb-client-logo-placeholder');
   const hint = document.querySelector('.client-logo-upload-hint');
   const wrap = document.querySelector('.client-logo-wrap');
+  if (!img) return; // esta app no tiene logo de empresa
   img.src = src;
   img.style.cssText = 'display:block;width:100%;height:100%;object-fit:cover;border-radius:50%;';
   if (placeholder) placeholder.style.display = 'none';
