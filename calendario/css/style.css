@@ -1436,3 +1436,16 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 .excel-bar .btn { height: 40px; padding: 0 6px; font-size: 12.5px; gap: 6px; text-align: center; line-height: 1.1; min-width: 0; }
 .excel-bar .btn span { min-width: 0; }
 @media (max-width: 420px) { .excel-bar .btn { font-size: 11.5px; gap: 4px; } .excel-bar .btn svg { display: none; } }
+
+/* ── Menú lateral: sin la línea del "cliente" (esta app es de una sola persona) y la parte de abajo
+   ("Más para tu negocio") con letra más grande para que se lea ── */
+.sidebar .sidebar-client { display: none !important; }
+.sidebar .sidebar-cosmart-label { font-size: 12px; letter-spacing: .6px; }
+.sidebar .puerto-item { gap: 10px; padding-top: 7px; padding-bottom: 7px; }
+.sidebar .puerto-icon { width: 17px; height: 17px; color: #fff; }
+.sidebar .puerto-name { font-size: 14px; line-height: 1.25; }
+.sidebar .puerto-desc { font-size: 12px; line-height: 1.3; margin-top: 2px; opacity: .92; }
+.sidebar .sb-curso-top { font-size: 15px; }
+.sidebar .sb-curso-sub { font-size: 13px; }
+.sidebar .sb-curso-btn { font-size: 13px; }
+.sidebar .sb-firma { font-size: 11.5px; }
