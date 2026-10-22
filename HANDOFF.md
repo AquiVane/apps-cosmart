@@ -2,6 +2,11 @@
 
 Actualizado: 2026-10-18.
 
+## 22/10 — Hosting migrado de GitHub Pages a Cloudflare Pages — EN PRODUCCIÓN
+- **Motivo:** los términos de GitHub Pages no permiten usarlo como hosting de un negocio/e-commerce (acá se vende la suscripción del Calendario). Pedido de Vaneh.
+- **Ahora:** proyecto **Cloudflare Pages `apps-cosmart`** (preview `apps-cosmart.pages.dev`) conectado a `AquiVane/apps-cosmart`, rama `main`, sin build, salida = raíz. Dominio personalizado: `apps.cosmart.com.ar` (zona `cosmart.com.ar`: el CNAME a `aquivane.github.io` se borró y Cloudflare creó el suyo). GitHub Pages **despublicado**; se borró `CNAME`. Cada push a `main` se publica solo.
+- **Comportamiento:** Cloudflare redirige `/x.html` → `/x` (308) conservando `?query` (`login.html?crear=1` → `/calendario/login?crear=1`); `/calendario` → `/calendario/`; una URL inexistente devuelve el `index.html` con 200 (GitHub daba 404). El service worker de `calendario/` no cachea nada, así que las redirecciones no lo afectan. `manifest.webmanifest` sigue con `start_url` `/calendario/app.html` (redirige a `/calendario/app`, dentro del scope). Verificado en desktop y mobile. La suscripción exige login: el pago se prueba logueada.
+
 ## Qué es
 Repo de las apps de COSMART para emprendedores. Cada app vive en su carpeta (`calendario/`, y más adelante el planner, etc.) y el sitio tendrá un catálogo por categorías (Organización, Productividad...). Dominio previsto: `apps.cosmart.com.ar` (Cloudflare Pages; DNS/proyecto Pages los configura Vaneh o se pide autorización explícita).
 
