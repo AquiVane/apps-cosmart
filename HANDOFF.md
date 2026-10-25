@@ -2,6 +2,9 @@
 
 Actualizado: 2026-10-18.
 
+## 25/10 — Calendario: misma revisión de celular que el panel de cliente del Hub
+- Se portó el bloque "Panel de cliente en celular" de `hub/css/style.css` al final de `calendario/css/style.css` (grillas `minmax(0,1fr)`, barra superior en 2 filas, calendarios sin "+" por celda, etc.). Auditado con Playwright en 390/360/320 px (Dashboard, Contenidos y sus pestañas, Guiones, Cuentas, Instrucciones): 0 desbordes. `.excel-bar .btn` mantiene `white-space:normal` (los 3 botones de Excel parten el texto en 2 renglones).
+
 ## 22/10 — Hosting migrado de GitHub Pages a Cloudflare Pages — EN PRODUCCIÓN
 - **Motivo:** los términos de GitHub Pages no permiten usarlo como hosting de un negocio/e-commerce (acá se vende la suscripción del Calendario). Pedido de Vaneh.
 - **Ahora:** proyecto **Cloudflare Pages `apps-cosmart`** (preview `apps-cosmart.pages.dev`) conectado a `AquiVane/apps-cosmart`, rama `main`, sin build, salida = raíz. Dominio personalizado: `apps.cosmart.com.ar` (zona `cosmart.com.ar`: el CNAME a `aquivane.github.io` se borró y Cloudflare creó el suyo). GitHub Pages **despublicado**; se borró `CNAME`. Cada push a `main` se publica solo.
