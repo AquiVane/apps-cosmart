@@ -2,6 +2,9 @@
 
 Actualizado: 2026-10-18.
 
+## 26/10 — Alarma de clon (pedido de Vaneh)
+- Todas las páginas HTML llevan, justo después del `<meta charset>` del `<head>`, un `<script data-anticlon>`: si la página se muestra desde un dominio que no es el oficial (ni uno de los `*.pages.dev` propios), corta la carga, reemplaza todo por un cartel "ATENCIÓN: esta NO es la página oficial de …" con botón a la oficial, y avisa pidiendo `<oficial>/_clon/<dominio-del-clon>` (aparece como 404 en Analíticas de Cloudflare → rutas más pedidas). **No sacarlo ni tocarlo; toda página HTML nueva tiene que llevarlo** (si hace falta, correr de nuevo el script que lo inserta o copiar el bloque de otra página del mismo repo).
+
 ## 25/10 — Calendario: misma revisión de celular que el panel de cliente del Hub
 - Se portó el bloque "Panel de cliente en celular" de `hub/css/style.css` al final de `calendario/css/style.css` (grillas `minmax(0,1fr)`, barra superior en 2 filas, calendarios sin "+" por celda, etc.). Auditado con Playwright en 390/360/320 px (Dashboard, Contenidos y sus pestañas, Guiones, Cuentas, Instrucciones): 0 desbordes. `.excel-bar .btn` mantiene `white-space:normal` (los 3 botones de Excel parten el texto en 2 renglones).
 
