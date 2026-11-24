@@ -3789,6 +3789,9 @@ const EXPORT_PAUTA_LABEL = { organico: 'Solo orgánico', dark: 'Sí – Dark pos
 // header normalizado (sin acentos, minúscula) -> campo del contenido
 const IMPORT_HEADER_MAP = {
   'titulo del contenido': 'titulo',
+  'remix o contenido original': 'clase',
+  'remix / original': 'clase',
+  clase: 'clase',
   titulo: 'titulo',
   'fecha de publicacion': 'fechaPub',
   fecha: 'fechaPub',
@@ -3902,6 +3905,7 @@ function importResolverAsignado(val) {
 // entre cuentas distintas, y la fecha puede cambiar sin que sea "otro"
 // contenido (reprogramar no debería crear un duplicado).
 const IMPORT_DIFF_FIELDS = [
+  { key: 'clase', label: 'Remix / contenido original' },
   { key: 'cuenta', label: 'Cuenta' },
   { key: 'fechaPub', label: 'Fecha de publicación' },
   { key: 'estado', label: 'Estado' },
@@ -3924,6 +3928,14 @@ const IMPORT_DIFF_FIELDS = [
   { key: 'asignado', label: 'Asignado a', esAsignado: true },
 ];
 
+// "Remix o contenido original" del Excel: Remix / Contenido original (acepta "Original"); vacío o cualquier otra cosa = sin definir.
+function importParseClase(v) {
+  const t = String(v == null ? '' : v).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (t === 'remix') return 'Remix';
+  if (t === 'original' || t === 'contenido original') return 'Contenido original';
+  return '';
+}
+
 function normImportTexto(s) { return String(s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
 
 function importValoresIguales(a, b, esArray) {
@@ -3937,6 +3949,7 @@ function importValoresIguales(a, b, esArray) {
 
 function importDiffContenido(existente, entrante) {
   return IMPORT_DIFF_FIELDS.filter(f => {
+    if (f.key === 'clase' && !entrante.clase) return false; // celda vacía en el Excel: no pisa lo que ya está cargado
     if (f.esAsignado) {
       return (existente.asignado?.email || '').toLowerCase() !== (entrante.asignado?.email || '').toLowerCase();
     }
@@ -4012,11 +4025,12 @@ function closeImportModal() {
 // para hacer modificaciones masivas afuera y volver a subirlo. Mismas
 // columnas y mismo orden que la plantilla de importación, para que el
 // archivo exportado se pueda volver a importar sin tocar encabezados.
-const EXPORT_CONTENIDOS_HEADERS = ['Título del contenido', 'Fecha de publicación', 'Estado', 'Cuenta', 'Plataformas', 'Ubicación', 'Formato', 'Dimensiones', 'Eje de comunicación', 'Tipo de contenido', 'Objetivo', 'Copy', 'Texto en pantalla', 'Prompt sugerido para IA', 'Sugerencia de pieza creativa', 'Guion', 'Link pieza terminada', 'Link material de referencia', 'Notas internas', 'Remix (solo lectura)'];
+const EXPORT_CONTENIDOS_HEADERS = ['Título del contenido', 'Remix o contenido original', 'Fecha de publicación', 'Estado', 'Cuenta', 'Plataformas', 'Ubicación', 'Formato', 'Dimensiones', 'Eje de comunicación', 'Tipo de contenido', 'Objetivo', 'Copy', 'Texto en pantalla', 'Prompt sugerido para IA', 'Sugerencia de pieza creativa', 'Guion', 'Link pieza terminada', 'Link material de referencia', 'Notas internas', 'Detalle de los remix (solo lectura)'];
 
 function contenidoAFilaExport(c) {
   return [
     c.titulo || '',
+    c.clase || '',
     c.fechaPub || '',
     c.estado || '',
     c.cuenta || '',
@@ -4115,7 +4129,7 @@ async function exportarContenidosExcel() {
   await loadXLSXLib();
   const aoa = [EXPORT_CONTENIDOS_HEADERS, ...STATE.contenidos.map(contenidoAFilaExport)];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = EXPORT_CONTENIDOS_HEADERS.map((h, i) => ({ wch: [30, 14, 12, 14, 16, 14, 12, 12, 18, 16, 12, 40, 40, 40, 40, 40, 28, 28, 30][i] || 16 }));
+  ws['!cols'] = EXPORT_CONTENIDOS_HEADERS.map((h, i) => ({ wch: [30, 22, 14, 12, 14, 16, 14, 12, 12, 18, 16, 12, 40, 40, 40, 40, 40, 28, 28, 30][i] || 16 }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Contenidos');
   const nombreCliente = (STATE.client?.nombre || STATE.client?.name || clientId || 'cliente').replace(/[^a-z0-9]+/gi, '_');
@@ -4334,6 +4348,7 @@ document.getElementById('import-file-input').addEventListener('change', async (e
 
       valid.push({
         titulo,
+        clase: importParseClase(obj.clase),
         fechaPub: importParseFecha(obj.fechaPub),
         estado,
         cuenta,
@@ -4522,7 +4537,7 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
       // son parte de la plantilla.
       const actualizaciones = aActualizar.map(r => {
         const u = { id: r.match.id };
-        IMPORT_DIFF_FIELDS.forEach(f => { u[f.key] = r.row[f.key]; });
+        IMPORT_DIFF_FIELDS.forEach(f => { u[f.key] = (f.key === 'clase' && !r.row.clase) ? r.match.clase : r.row[f.key]; });
         return u;
       });
       const actualizados = await updateContenidosBulk(clientId, actualizaciones);
