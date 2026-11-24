@@ -1308,6 +1308,17 @@ function renderDashboard(container) {
 
   const conts = STATE.contenidos.filter(c => c.fechaPub && c.fechaPub.startsWith(prefix));
 
+  // Remix del mes: cada remix cuenta en su PROPIA fecha y se muestra aparte, diferenciado del contenido (no suma a los números de contenido).
+  const remixDelMes = [];
+  STATE.contenidos.forEach(c => {
+    if (c.archivado || !Array.isArray(c.remixes)) return;
+    c.remixes.forEach((r, i) => { if (r && r.fecha && r.fecha.startsWith(prefix)) remixDelMes.push({ c, r, n: i + 1 }); });
+  });
+  remixDelMes.sort((a, b) => a.r.fecha < b.r.fecha ? -1 : a.r.fecha > b.r.fecha ? 1 : 0);
+  const remixPublicados = remixDelMes.filter(x => remixEstadoDe(x.r) === 'Publicado').length;
+  const remixEnProceso = remixDelMes.filter(x => remixEstadoDe(x.r) === 'En proceso').length;
+  const remixIdea = remixDelMes.length - remixPublicados - remixEnProceso;
+
   // ── STAT PILLS ──
   const total = conts.length;
   const publicados = conts.filter(c => c.estado === 'Publicado').length;
@@ -1364,6 +1375,7 @@ function renderDashboard(container) {
   // For each week (S1-S4), collect Mon-Sun buckets
   const weeks = [[], [], [], []]; // each: [L,M,Mi,J,V,S,D] count
   for (let w = 0; w < 4; w++) weeks[w] = [0,0,0,0,0,0,0];
+  const weeksRemix = [[0,0,0,0,0,0,0],[0,0,0,0,0,0,0],[0,0,0,0,0,0,0],[0,0,0,0,0,0,0]]; // remix por semana/día, aparte de los contenidos
   // day 1..daysInMonth
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(dashYear, dashMonth, d);
@@ -1372,6 +1384,7 @@ function renderDashboard(container) {
     const dateStr = `${yearStr}-${monthStr}-${String(d).padStart(2,'0')}`;
     const count = conts.filter(c => c.fechaPub === dateStr).length;
     weeks[weekIdx][dow] += count;
+    weeksRemix[weekIdx][dow] += remixDelMes.filter(x => x.r.fecha === dateStr).length;
   }
 
   // ── BAR CHART helper ──
@@ -1392,14 +1405,16 @@ function renderDashboard(container) {
     return `<td><span class="${cls}">${n}</span></td>`;
   }
 
+  const remixMark = (k) => k > 0 ? `<span class="freq-remix" title="${k} remix" style="display:block;font-size:9px;font-weight:700;color:var(--primary);line-height:1.1;">R${k}</span>` : '';
   const freqRows = weeks.map((week, wi) => {
     const weekTotal = week.reduce((s,v) => s+v, 0);
-    if (wi > 0 && weeks.slice(0,wi).every(w => w.reduce((s,v)=>s+v,0) === 0) && weekTotal === 0) return '';
+    const weekRemix = weeksRemix[wi].reduce((s,v) => s+v, 0);
+    if (wi > 0 && weeks.slice(0,wi).every((w, j) => w.reduce((s,v)=>s+v,0) === 0 && weeksRemix[j].reduce((s,v)=>s+v,0) === 0) && weekTotal === 0 && weekRemix === 0) return '';
     return `
       <tr>
         <td class="cat-label week-sep" style="color:var(--primary);font-weight:700;">S${wi+1}</td>
-        ${week.map(n => `<td class="week-sep">${n > 0 ? `<span class="${n===1?'freq-cell-1':n===2?'freq-cell-2':n===3?'freq-cell-3':'freq-cell-many'}">${n}</span>` : '<span class="freq-cell-0">·</span>'}</td>`).join('')}
-        <td class="week-sep" style="font-weight:700;color:var(--primary);font-size:11px;">${weekTotal}</td>
+        ${week.map((n, di) => `<td class="week-sep">${n > 0 ? `<span class="${n===1?'freq-cell-1':n===2?'freq-cell-2':n===3?'freq-cell-3':'freq-cell-many'}">${n}</span>` : '<span class="freq-cell-0">·</span>'}${remixMark(weeksRemix[wi][di])}</td>`).join('')}
+        <td class="week-sep" style="font-weight:700;color:var(--primary);font-size:11px;">${weekTotal}${remixMark(weekRemix)}</td>
       </tr>`;
   }).join('');
 
@@ -1421,6 +1436,11 @@ function renderDashboard(container) {
       <div class="dash-stat-pill"><div class="dash-stat-pill-val" style="color:#22c55e">${publicados}</div><div class="dash-stat-pill-label">Publicados</div></div>
       <div class="dash-stat-pill"><div class="dash-stat-pill-val" style="color:#3b82f6">${programados}</div><div class="dash-stat-pill-label">Programados</div></div>
       <div class="dash-stat-pill"><div class="dash-stat-pill-val" style="color:#f59e0b">${enProceso}</div><div class="dash-stat-pill-label">En proceso</div></div>
+      ${remixDelMes.length ? `
+      <div class="dash-stat-pill"><div class="dash-stat-pill-val" style="color:var(--primary)">${remixDelMes.length}</div><div class="dash-stat-pill-label">Remix del mes</div></div>
+      <div class="dash-stat-pill"><div class="dash-stat-pill-val" style="color:var(--status-publicado)">${remixPublicados}</div><div class="dash-stat-pill-label">Remix publicados</div></div>
+      <div class="dash-stat-pill"><div class="dash-stat-pill-val" style="color:var(--status-proceso)">${remixEnProceso}</div><div class="dash-stat-pill-label">Remix en proceso</div></div>
+      <div class="dash-stat-pill"><div class="dash-stat-pill-val" style="color:var(--status-idea)">${remixIdea}</div><div class="dash-stat-pill-label">Remix en idea</div></div>` : ''}
     </div>
 
     <div class="dash-layout">
@@ -1441,9 +1461,10 @@ function renderDashboard(container) {
                 <td class="cat-label" style="font-weight:700;color:var(--text-muted);">Total</td>
                 ${[0,1,2,3,4,5,6].map(d => {
                   const tot = weeks.reduce((s,w) => s+w[d], 0);
-                  return `<td style="font-weight:${tot?'700':'400'};color:${tot?'var(--primary)':'#cbd5e1'};font-size:11px;">${tot||'·'}</td>`;
+                  const totR = weeksRemix.reduce((s,w) => s+w[d], 0);
+                  return `<td style="font-weight:${tot?'700':'400'};color:${tot?'var(--primary)':'#cbd5e1'};font-size:11px;">${tot||'·'}${remixMark(totR)}</td>`;
                 }).join('')}
-                <td style="font-weight:700;color:var(--primary);font-size:12px;">${total}</td>
+                <td style="font-weight:700;color:var(--primary);font-size:12px;">${total}${remixMark(remixDelMes.length)}</td>
               </tr>
             </tbody>
           </table>
@@ -1455,8 +1476,24 @@ function renderDashboard(container) {
             <span class="freq-cell-3" style="padding:1px 6px;">3</span>
             <span class="freq-cell-many" style="padding:1px 6px;">4+</span>
             <span>Más contenido</span>
+            ${remixDelMes.length ? '<span style="margin-left:10px;color:var(--primary);font-weight:700;">R = remix</span>' : ''}
           </div>
         </div>
+        ${remixDelMes.length ? `
+        <div class="dash-card">
+          <div class="dash-card-title">Remix del mes</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            ${remixDelMes.map(({ c, r, n }) => {
+              const est = remixEstadoDe(r), col = remixColor(est);
+              return `<div onclick="openContenidoModalById('${c.id}')" title="Abrir el contenido" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px;border-radius:6px;cursor:pointer;background:var(--surface-sunken);border:1px solid var(--border);border-left:3px solid ${col.fg};">
+                <span style="font-size:11px;font-weight:700;color:var(--primary);white-space:nowrap;">Remix ${n}</span>
+                <span style="font-size:12px;flex:1;min-width:120px;word-break:break-word;color:var(--text);">${escapeHtml(c.titulo)}</span>
+                <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">${fmtDate(r.fecha)}</span>
+                <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap;background:${col.bg};color:${col.fg};">${est}</span>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>` : ''}
         <!-- Gráfico de torta por tipo -->
         ${buildPieChart(tipos, COLORS, '')}
         ${renderTrabajoRealizado()}
@@ -1850,29 +1887,34 @@ let pautaFiltroSel = 'organico';
 let _bancoFiltroPlataforma = 'todas';
 let _bancoFiltroFechaDesde = '';
 let _bancoFiltroFechaHasta = '';
+let _filtroClase = 'todas'; // 'todas' | 'Contenido original' | 'Remix' | 'sin' (todavía sin definir)
+// Orden del banco por fecha de publicación: 'asc' = del más antiguo al más nuevo, 'desc' = del más nuevo al más antiguo.
+// Los contenidos sin fecha van siempre al final. Se recuerda en este dispositivo.
+let _bancoOrden = (() => { try { return localStorage.getItem('cal_banco_orden') === 'desc' ? 'desc' : 'asc'; } catch (e) { return 'asc'; } })();
 const BANCO_PLATAFORMAS = ['Instagram', 'Facebook', 'LinkedIn', 'Twitter / X', 'TikTok', 'YouTube', 'Sitio Web', 'Blog'];
+
+// Las secciones de Contenidos son un desplegable (antes eran botones).
+const CONT_BLOQUES = [['banco', 'Banco de contenidos'], ['calendario', 'Calendario de contenidos'], ['ideas', 'Banco de ideas'], ['metricas', 'Métricas'], ['archivados', 'Archivados']];
+function syncBloqueSel() {
+  const sel = document.getElementById('cont-bloque-sel');
+  if (sel) sel.value = CONT_BLOQUES.some(b => b[0] === activeContTab) ? activeContTab : 'banco';
+}
 
 function renderContenidos(container) {
   container.innerHTML = `
     <div class="mb-16" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-      <div class="tabs" id="cont-tabs">
-        <button class="tab-btn ${activeContTab==='banco'?'active':''}" data-tab="banco">Banco de contenidos</button>
-        <button class="tab-btn ${activeContTab==='calendario'?'active':''}" data-tab="calendario">Calendario de contenidos</button>
-        <button class="tab-btn ${activeContTab==='ideas'?'active':''}" data-tab="ideas">Banco de ideas</button>
-        <button class="tab-btn ${activeContTab==='metricas'?'active':''}" data-tab="metricas">Métricas</button>
-        <button class="tab-btn ${activeContTab==='archivados'?'active':''}" data-tab="archivados">Archivados</button>
+      <div class="cont-selectores solo" id="cont-selectores">
+        <select id="cont-bloque-sel" class="cont-sel-grande" aria-label="Sección de contenidos">
+          ${CONT_BLOQUES.map(([k, l]) => `<option value="${k}" ${activeContTab === k ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
       </div>
     </div>
     <div id="cont-tab-body"></div>
   `;
 
-  document.querySelectorAll('#cont-tabs .tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('#cont-tabs .tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      activeContTab = btn.dataset.tab;
-      renderContTab(activeContTab);
-    });
+  document.getElementById('cont-bloque-sel').addEventListener('change', e => {
+    activeContTab = e.target.value;
+    renderContTab(activeContTab);
   });
 
   document.querySelectorAll('#cont-pauta-filtros .tab-btn').forEach(btn => { /* sin pauta */
@@ -2013,9 +2055,16 @@ function renderBancoContenidos(container) {
   const activos = STATE.contenidos.filter(c => !c.archivado).filter(matchPautaFilter)
     .filter(c => _bancoFiltroPlataforma === 'todas' || (c.plataformas || []).includes(_bancoFiltroPlataforma))
     .filter(c => !_bancoFiltroFechaDesde || (c.fechaPub && c.fechaPub >= _bancoFiltroFechaDesde))
-    .filter(c => !_bancoFiltroFechaHasta || (c.fechaPub && c.fechaPub <= _bancoFiltroFechaHasta));
+    .filter(c => !_bancoFiltroFechaHasta || (c.fechaPub && c.fechaPub <= _bancoFiltroFechaHasta))
+    .filter(c => _filtroClase === 'todas' || (_filtroClase === 'sin' ? !c.clase : c.clase === _filtroClase));
   const archivados = STATE.contenidos.filter(c => c.archivado);
-  const all = [...activos].sort((a, b) => (a.fechaPub || 'zzz') > (b.fechaPub || 'zzz') ? 1 : -1);
+  const dir = _bancoOrden === 'desc' ? -1 : 1;
+  const all = [...activos].sort((a, b) => {
+    if (!a.fechaPub && !b.fechaPub) return 0;
+    if (!a.fechaPub) return 1;   // sin fecha siempre al final
+    if (!b.fechaPub) return -1;
+    return a.fechaPub === b.fechaPub ? 0 : (a.fechaPub > b.fechaPub ? dir : -dir);
+  });
 
   const hoy = new Date();
   const anioActual = String(hoy.getFullYear());
@@ -2027,7 +2076,7 @@ function renderBancoContenidos(container) {
     if (!grupos.has(clave)) grupos.set(clave, []);
     grupos.get(clave).push(c);
   });
-  const clavesConFecha = [...grupos.keys()].filter(c => c !== 'sin-fecha').sort((a, b) => a.localeCompare(b));
+  const clavesConFecha = [...grupos.keys()].filter(c => c !== 'sin-fecha').sort((a, b) => dir * a.localeCompare(b));
   const anios = [...new Set(clavesConFecha.map(c => c.slice(0, 4)))];
 
   const sinFechaHtml = grupos.has('sin-fecha')
@@ -2049,13 +2098,23 @@ function renderBancoContenidos(container) {
   }).join('');
 
   const hayAlgunContenido = STATE.contenidos.some(c => !c.archivado);
-  const hayFiltroActivo = _bancoFiltroPlataforma !== 'todas' || _bancoFiltroFechaDesde || _bancoFiltroFechaHasta;
+  const hayFiltroActivo = _bancoFiltroPlataforma !== 'todas' || _bancoFiltroFechaDesde || _bancoFiltroFechaHasta || _filtroClase !== 'todas';
 
   const filtrosHtml = `
     <div class="banco-filtros" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;">
       <select id="banco-filtro-plataforma" class="form-control" style="width:auto;font-size:12px;padding:5px 8px;" onchange="cambiarBancoFiltroPlataforma(this.value)">
         <option value="todas">Todas las plataformas</option>
         ${BANCO_PLATAFORMAS.map(p => `<option value="${p}" ${_bancoFiltroPlataforma === p ? 'selected' : ''}>${p}</option>`).join('')}
+      </select>
+      <select id="banco-filtro-clase" class="form-control" style="width:auto;font-size:12px;padding:5px 8px;" onchange="cambiarBancoFiltroClase(this.value)" aria-label="Remix o contenido original">
+        <option value="todas" ${_filtroClase === 'todas' ? 'selected' : ''}>Remix y originales</option>
+        <option value="Contenido original" ${_filtroClase === 'Contenido original' ? 'selected' : ''}>Contenido original</option>
+        <option value="Remix" ${_filtroClase === 'Remix' ? 'selected' : ''}>Remix</option>
+        <option value="sin" ${_filtroClase === 'sin' ? 'selected' : ''}>Sin definir</option>
+      </select>
+      <select id="banco-orden" class="form-control" style="width:auto;font-size:12px;padding:5px 8px;" onchange="cambiarBancoOrden(this.value)" aria-label="Orden por fecha">
+        <option value="asc" ${_bancoOrden === 'asc' ? 'selected' : ''}>Más antiguos primero</option>
+        <option value="desc" ${_bancoOrden === 'desc' ? 'selected' : ''}>Más nuevos primero</option>
       </select>
       <div class="banco-fechas">
       <label style="font-size:12px;color:var(--text-muted);">Desde</label>
@@ -2069,9 +2128,16 @@ function renderBancoContenidos(container) {
 
   container.innerHTML = `
     ${filtrosHtml}
-    ${all.length ? sinFechaHtml + aniosHtml : (hayAlgunContenido ? `<div class="empty-state"><p>Sin contenidos con este filtro.</p></div>` : ejemploContenidoHtml())}
+    ${all.length ? aniosHtml + sinFechaHtml : (hayAlgunContenido ? `<div class="empty-state"><p>Sin contenidos con este filtro.</p></div>` : ejemploContenidoHtml())}
   `;
 }
+
+window.cambiarBancoFiltroClase = function(val) { _filtroClase = val; renderContTab('banco'); };
+window.cambiarBancoOrden = function(val) {
+  _bancoOrden = val === 'desc' ? 'desc' : 'asc';
+  try { localStorage.setItem('cal_banco_orden', _bancoOrden); } catch (e) {}
+  renderContTab('banco');
+};
 
 window.cambiarBancoFiltroPlataforma = function(val) {
   _bancoFiltroPlataforma = val;
@@ -2088,6 +2154,7 @@ window.limpiarBancoFiltros = function() {
   _bancoFiltroPlataforma = 'todas';
   _bancoFiltroFechaDesde = '';
   _bancoFiltroFechaHasta = '';
+  _filtroClase = 'todas';
   renderContTab('banco');
 };
 
@@ -2136,6 +2203,12 @@ function renderCalendario(container) {
       const dateStr = cellDate.toISOString().split('T')[0];
       const isToday = dateStr === hoy.toISOString().split('T')[0];
       const dayConts = STATE.contenidos.filter(c => c.fechaPub === dateStr && !c.archivado);
+      // Remix con fecha propia ese día: aparecen aunque el contenido tenga otra fecha.
+      const dayRemix = [];
+      STATE.contenidos.forEach(c => {
+        if (c.archivado || !Array.isArray(c.remixes)) return;
+        c.remixes.forEach((r, i) => { if (r && r.fecha === dateStr) dayRemix.push({ c, r, n: i + 1 }); });
+      });
 
       cells += `<div class="cal-day${isOther ? ' other-month' : ''}${isToday ? ' today' : ''}">
         <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -2148,6 +2221,14 @@ function renderCalendario(container) {
             ${(c.plataformas||[]).map(p=>platIcon(p)).join('')} ${c.titulo}
           </div>
         `).join('')}
+        ${dayRemix.map(({ c, r, n }) => {
+          const est = remixEstadoDe(r), col = remixColor(est);
+          return `
+          <div class="cal-event" style="background:${col.bg};color:${col.fg};border-left:3px solid ${col.fg};${est === 'Publicado' ? 'opacity:.85;' : ''}"
+               onclick="openContenidoModalById('${c.id}')" title="Remix ${n} (${est}) · ${escapeHtml(c.titulo)}">
+            Remix ${n} · ${escapeHtml(c.titulo)}${est === 'Publicado' ? ' ✓' : ''}
+          </div>`;
+        }).join('')}
       </div>`;
     }
 
@@ -2709,7 +2790,7 @@ window.promoverIdea = async function(id) {
   await deleteIdea(clientId, id).catch(() => {});
   renderContTab('banco');
   activeContTab = 'banco';
-  document.querySelectorAll('#cont-tabs .tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab==='banco'));
+  syncBloqueSel();
 };
 
 // ─ En proceso y revisión ─
@@ -3006,6 +3087,47 @@ window.removeDriveLink = function(type, idx) {
   renderDriveLinks(type);
 };
 
+// ── Remix (24/11, igual que el panel de cliente del Hub) ──
+// Un contenido puede tener varios remix (Remix 1, 2, 3…), cada uno con SU fecha, su link y su estado (Idea / En proceso /
+// Publicado). Se guardan en contenido.remixes = [{ id, fecha, link, estado }]; el nombre "Remix N" sale del orden.
+let _remixes = [];
+const REMIX_ESTADOS = ['Idea', 'En proceso', 'Publicado'];
+const _remixEsc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function _remixUrlSegura(u) { return /^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : ''; }
+function remixEstadoDe(r) { return r && (r.estado === 'En proceso' || r.estado === 'Publicado') ? r.estado : 'Idea'; }
+function remixColor(estado) {
+  const k = estado === 'Publicado' ? 'publicado' : estado === 'En proceso' ? 'proceso' : 'idea';
+  return { fg: `var(--status-${k})`, bg: `var(--status-${k}-bg)` };
+}
+
+function renderRemixes() {
+  const cont = document.getElementById('remix-list');
+  if (!cont) return;
+  cont.innerHTML = _remixes.map((r, i) => {
+    const est = remixEstadoDe(r), col = remixColor(est);
+    const url = _remixUrlSegura(r.link);
+    return `
+    <div class="remix-fila" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 10px;background:var(--surface-sunken);border-radius:6px;border:1px solid var(--border);border-left:3px solid ${col.fg};">
+      <strong style="font-size:12px;color:var(--primary);flex:0 0 64px;">Remix ${i + 1}</strong>
+      <input type="date" class="form-control" value="${_remixEsc(r.fecha || '')}" onchange="updateRemix(${i},'fecha',this.value)" style="flex:0 1 150px;min-width:130px;">
+      <input type="url" class="form-control" value="${_remixEsc(r.link || '')}" placeholder="https://… link del remix" oninput="updateRemix(${i},'link',this.value)" onchange="renderRemixes()" style="flex:1 1 180px;min-width:0;">
+      ${url ? `<a href="${_remixEsc(url)}" target="_blank" rel="noopener" title="Abrir el link del remix" style="color:var(--accent);text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-width:38px;min-height:38px;flex-shrink:0;">${ico('link', 'azul', 16)}</a>` : ''}
+      <select onchange="updateRemix(${i},'estado',this.value);renderRemixes()" style="font-size:12px;font-weight:600;padding:6px 8px;border-radius:6px;border:1px solid ${col.fg};background:${col.bg};color:${col.fg};flex-shrink:0;">
+        ${REMIX_ESTADOS.map(e => `<option value="${e}" ${est === e ? 'selected' : ''}>${e}</option>`).join('')}
+      </select>
+      <button type="button" onclick="removeRemix(${i})" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;line-height:1;padding:0 4px;flex-shrink:0;" title="Quitar este remix">×</button>
+    </div>`;
+  }).join('') || '<p style="font-size:12px;color:var(--text-muted);margin:0;">Sin remix. Agregá uno.</p>';
+  refreshIcons();
+}
+window.renderRemixes = renderRemixes;
+window.addRemix = function() {
+  _remixes.push({ id: 'rx' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), fecha: '', link: '', estado: 'Idea' });
+  renderRemixes();
+};
+window.updateRemix = function(i, campo, val) { if (_remixes[i]) _remixes[i][campo] = val; };
+window.removeRemix = function(i) { _remixes.splice(i, 1); renderRemixes(); };
+
 // Image paste/upload
 // Igual que las imágenes de Tareas (ver comentario en
 // renderTareaImgThumbs): se suben a R2 al toque en vez de embeberse como
@@ -3168,6 +3290,7 @@ window.openContenidoModal = function(defaults = {}) {
 
   document.getElementById('modal-cont-title').textContent = editingContenido ? 'Editar contenido' : 'Nuevo contenido';
   document.getElementById('cf-titulo').value = c.titulo || '';
+  { const cl = document.getElementById('cf-clase'); if (cl) { cl.value = c.clase || ''; cl.classList.remove('campo-error'); } } // sin valor por defecto: hay que elegir
   document.getElementById('cf-fecha').value = c.fechaPub || defaults.fechaPub || '';
   document.getElementById('cf-estado').value = c.estado || defaults.estado || 'Idea';
   document.getElementById('cf-eje').value = c.eje || 'Institucional';
@@ -3217,6 +3340,10 @@ window.openContenidoModal = function(defaults = {}) {
   _refLinks = Array.isArray(c.linkDriveRef) ? [...c.linkDriveRef] : (c.linkDriveRef ? [c.linkDriveRef] : []);
   renderDriveLinks('drive');
   renderDriveLinks('ref');
+
+  // Remix
+  _remixes = Array.isArray(c.remixes) ? c.remixes.map(r => ({ ...r, estado: remixEstadoDe(r) })) : [];
+  renderRemixes();
 
   // Images
   _imgList = Array.isArray(c.imagenes) ? [...c.imagenes] : [];
@@ -3303,6 +3430,8 @@ document.getElementById('saveContenidoBtn').addEventListener('click', async (e) 
   if (btn.disabled) return;
   const titulo = document.getElementById('cf-titulo').value.trim();
   if (!titulo) { alert('El título es obligatorio.'); document.getElementById('cf-titulo').focus(); return; }
+  const claseSel = document.getElementById('cf-clase');
+  if (!claseSel.value) { claseSel.classList.add('campo-error'); alert('Elegí si es Remix o Contenido original antes de guardar.'); claseSel.focus(); return; }
   if (_imgList.some(i => i.subiendo)) { alert('Esperá a que termine de subir el archivo.'); return; }
 
   const cuentaSel = document.getElementById('cf-cuenta');
@@ -3352,10 +3481,14 @@ document.getElementById('saveContenidoBtn').addEventListener('click', async (e) 
     pauta,
     linkDrive: _driveLinks.filter(Boolean),
     linkDriveRef: _refLinks.filter(Boolean),
+    clase: claseSel.value,
+    remixes: _remixes.map(r => ({ ...r, link: (r.link || '').trim() })),
     imagenes: serializarImagenesCont(_imgList),
     notas: document.getElementById('cf-notas').value,
     comentarios: editingContenido?.comentarios || [],
   };
+
+  if (!obj.remixes.length && !(editingContenido && Array.isArray(editingContenido.remixes))) delete obj.remixes; // no ensuciar contenidos que nunca tuvieron remix
 
   try {
     const saved = await saveContenido(clientId, obj);
@@ -3879,7 +4012,7 @@ function closeImportModal() {
 // para hacer modificaciones masivas afuera y volver a subirlo. Mismas
 // columnas y mismo orden que la plantilla de importación, para que el
 // archivo exportado se pueda volver a importar sin tocar encabezados.
-const EXPORT_CONTENIDOS_HEADERS = ['Título del contenido', 'Fecha de publicación', 'Estado', 'Cuenta', 'Plataformas', 'Ubicación', 'Formato', 'Dimensiones', 'Eje de comunicación', 'Tipo de contenido', 'Objetivo', 'Copy', 'Texto en pantalla', 'Prompt sugerido para IA', 'Sugerencia de pieza creativa', 'Guion', 'Link pieza terminada', 'Link material de referencia', 'Notas internas'];
+const EXPORT_CONTENIDOS_HEADERS = ['Título del contenido', 'Fecha de publicación', 'Estado', 'Cuenta', 'Plataformas', 'Ubicación', 'Formato', 'Dimensiones', 'Eje de comunicación', 'Tipo de contenido', 'Objetivo', 'Copy', 'Texto en pantalla', 'Prompt sugerido para IA', 'Sugerencia de pieza creativa', 'Guion', 'Link pieza terminada', 'Link material de referencia', 'Notas internas', 'Remix (solo lectura)'];
 
 function contenidoAFilaExport(c) {
   return [
@@ -3902,6 +4035,7 @@ function contenidoAFilaExport(c) {
     (c.linkDrive || []).join(', '),
     (c.linkDriveRef || []).join(', '),
     c.notas || '',
+    (c.remixes || []).map((r, i) => `Remix ${i + 1}: ${r.fecha || 'sin fecha'} · ${remixEstadoDe(r)}${r.link ? ' · ' + r.link : ''}`).join('\n'),
   ];
 }
 
@@ -7958,8 +8092,8 @@ function TOUR_APP_STEPS() {
   const nav = s => movil ? `.bnav-btn[data-section="${s}"]` : `.nav-item[data-section="${s}"]`;
   return [
     { selector: null, titulo: '¡Bienvenido/a a tu Calendario de contenidos!', texto: 'Acá organizás lo que publicás, guardás tus ideas y mirás cómo te va. Te mostramos todo en un minuto.' },
-    { selector: '#cont-tabs', titulo: 'Contenidos', texto: 'Tu banco de contenidos en lista, con su calendario. Tocá "+ Nuevo contenido" para cargar un post: título, fecha, estado, plataforma y copy.' },
-    { selector: '#cont-tabs [data-tab="ideas"]', titulo: 'Banco de ideas', texto: 'Anotá cada idea cuando se te ocurra. Después la pasás al calendario con un toque.' },
+    { selector: '#cont-selectores', titulo: 'Contenidos', texto: 'Tu banco de contenidos en lista, con su calendario. Tocá "+ Nuevo contenido" para cargar un post: título, fecha, estado, plataforma y copy.' },
+    { selector: '#cont-selectores', titulo: 'Banco de ideas', texto: 'Anotá cada idea cuando se te ocurra. Después la pasás al calendario con un toque.' },
     { selector: '.excel-bar', titulo: 'Importar y exportar', texto: `Podés cargar muchos contenidos juntos con la plantilla de Excel y bajar todo cuando quieras.<div style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:8px 10px;background:rgba(26,77,170,.08);border-radius:8px;font-size:12.5px;">${ico('lightbulb', 'azul', 18)}<span><strong>Tip:</strong> también podés bajarte la plantilla y pedirle a la IA que la complete con tus ideas, respetando las instrucciones. Después la subís de forma masiva.</span></div>` },
     { selector: nav('guiones'), titulo: 'Guiones', texto: 'Escribí el guion de tus videos y leelo en pantalla mientras grabás, con el teleprompter.' },
     { selector: nav('cuentas'), titulo: 'Mis cuentas', texto: 'Cargá tus redes una sola vez. El formulario te las trae siempre.' },

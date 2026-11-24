@@ -2,6 +2,13 @@
 
 Actualizado: 2026-10-18.
 
+## 24/11 — Calendario de contenidos: cambios de contenidos portados desde el Hub (pedido de Vaneh)
+- Regla de Vaneh (24/11): todo cambio en TAREAS o CONTENIDOS se aplica en todos los módulos donde aparecen, incluida esta app. `calendario/` es una copia recortada del panel de cliente del Hub (`AquiVane/hub`): hay que portar el cambio a mano a `calendario/app.html`, `js/app.js` y `css/style.css`.
+- Portado hoy: campo obligatorio "¿Remix o contenido original?" (`cf-clase`, `contenido.clase`, sin valor por defecto, no deja guardar sin elegir); sección **Remix** del formulario (`contenido.remixes = [{id, fecha, link, estado}]`, estados Idea / En proceso / Publicado, link clickeable); remix en el **Calendario** (en su fecha, por estado) y en el **Dashboard** (pills + marca R en la grilla + tarjeta "Remix del mes", diferenciados del contenido); banco con **orden elegible** (más antiguos/nuevos primero, recordado en `cal_banco_orden`) y **"Sin fecha" al final**; **filtro Remix / original** en la fila de filtros del banco; secciones de Contenidos (Banco, Calendario, Ideas, Métricas, Archivados) en un **desplegable** (`#cont-bloque-sel`; sin Orgánico/Pauta porque la app no tiene pauta); "Material de referencia / bruto" debajo del selector Remix/original; columna "Remix (solo lectura)" al final del Excel exportado (al importar se ignora).
+- Sin emojis de sistema en lo nuevo (íconos lucide). `app.html`: `style.css?v=7`, `app.js?v=3`.
+- Probado con `dev/mock-api.js` en 1366 y 390 px, claro y oscuro (guardado, remix, filtro, orden, calendario, dashboard, sin scroll horizontal).
+- Pendiente: contenidos ya cargados no tienen `clase` ("Sin definir") hasta que se editan; el Excel no importa la clase.
+
 ## 26/10 — Alarma de clon (pedido de Vaneh)
 - Todas las páginas HTML llevan, justo después del `<meta charset>` del `<head>`, un `<script data-anticlon>`: si la página se muestra desde un dominio que no es el oficial (ni uno de los `*.pages.dev` propios), corta la carga, reemplaza todo por un cartel "ATENCIÓN: esta NO es la página oficial de …" con botón a la oficial, y avisa pidiendo `<oficial>/_clon/<dominio-del-clon>` (aparece como 404 en Analíticas de Cloudflare → rutas más pedidas). **No sacarlo ni tocarlo; toda página HTML nueva tiene que llevarlo** (si hace falta, correr de nuevo el script que lo inserta o copiar el bloque de otra página del mismo repo).
 
