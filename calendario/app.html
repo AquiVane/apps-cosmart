@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-title" content="Calendario">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=9">
+  <link rel="stylesheet" href="css/style.css?v=10">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
@@ -152,7 +152,7 @@
           <input type="text" id="cf-titulo" class="form-control" placeholder="Ej: Story 1 – Show La Rosalía">
         </div>
 
-        <div class="form-group" style="grid-column:span 3;">
+        <div class="form-group" id="cf-clase-group" style="grid-column:span 3;">
           <label>¿Remix o contenido original? <span class="req-star">*</span></label>
           <select id="cf-clase" class="form-control" onchange="this.classList.remove('campo-error')">
             <option value="">Elegí una opción…</option>
@@ -284,10 +284,8 @@
           <label>Objetivo</label>
           <select id="cf-objetivo" class="form-control">
             <option>Notoriedad</option>
-            <option>Engagement</option>
-            <option>Alcance</option>
-            <option>Conversión</option>
-            <option>Tráfico</option>
+            <option>Interacción</option>
+            <option>Acción</option>
           </select>
         </div>
 
@@ -1237,7 +1235,7 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=6"></script>
+<script type="module" src="js/app.js?v=7"></script>
 <script src="js/theme.js"></script>
 <!-- Modal: Gestión de equipo -->
 <div id="equipoModal" class="modal-overlay hidden">
