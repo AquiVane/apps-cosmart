@@ -3847,6 +3847,8 @@ window.traerGuionDeContenido = async function(contenidoId) {
 // ──────────────────────────────────────────────────────
 const IMPORT_ESTADOS = ESTADOS_CONT;
 const IMPORT_PAUTA_MAP = {
+  pauta: 'dark', // desplegable nuevo: Orgánico / Pauta / Ambos
+  ambos: 'dark-organico',
   'solo organico': 'organico',
   'si dark post': 'dark',
   'si dark + organico': 'dark-organico',
@@ -3855,7 +3857,7 @@ const IMPORT_PAUTA_MAP = {
   dark: 'dark',
   'dark-organico': 'dark-organico',
 };
-const EXPORT_PAUTA_LABEL = { organico: 'Solo orgánico', dark: 'Sí – Dark post', 'dark-organico': 'Sí – Dark + orgánico' };
+const EXPORT_PAUTA_LABEL = { organico: 'Orgánico', dark: 'Pauta', 'dark-organico': 'Ambos' };
 // header normalizado (sin acentos, minúscula) -> campo del contenido
 const IMPORT_HEADER_MAP = {
   'titulo del contenido': 'titulo',
@@ -3901,6 +3903,24 @@ const IMPORT_HEADER_MAP = {
   responsable: 'asignado',
   'responsable sugerido': 'asignado',
 };
+
+// Columnas de los remix del Excel: "Remix 1 · Fecha / Link / Estado / Copy" (hasta 3 remix por fila).
+[1, 2, 3].forEach(n => { ['fecha', 'link', 'estado', 'copy'].forEach(c => { IMPORT_HEADER_MAP[`remix ${n} ${c}`] = `rx${n}_${c}`; }); });
+// Valores viejos de Objetivo / Eje / Tipo -> los vigentes (mismo criterio que el formulario de contenido).
+const _IMP_OBJ = { Engagement: 'Interacción', Alcance: 'Notoriedad', 'Conversión': 'Acción', 'Tráfico': 'Acción', Interaccion: 'Interacción', Accion: 'Acción' };
+const _IMP_EJE = { Institucional: 'Informar', Entretenimiento: 'Entretener', Comercial: 'Informar', 'Interacción': 'Entretener', Educativo: 'Informar', Inspiracional: 'Inspirar' };
+const _IMP_TIPO = { Informativo: 'Comunicacional', Promocional: 'De venta', Sorteo: 'Interactivo', Evento: 'Comunicacional', 'Celebración': 'Comunicacional', Tutorial: 'Comunicacional', Venta: 'De venta' };
+const _impMap = (m, v) => { const t = String(v || '').trim(); return m[t] || t; };
+function importParseRemixes(obj) {
+  const out = [];
+  [1, 2, 3].forEach(n => {
+    const fecha = importParseFecha(obj[`rx${n}_fecha`]), link = String(obj[`rx${n}_link`] || '').trim(), copy = String(obj[`rx${n}_copy`] || '').trim();
+    const e = String(obj[`rx${n}_estado`] || '').trim().toLowerCase();
+    if (!fecha && !link && !copy && !e) return;
+    out.push({ id: 'rx' + Date.now().toString(36) + n + Math.random().toString(36).slice(2, 4), fecha: fecha || '', link, copy, estado: e.startsWith('public') ? 'Publicado' : (e.includes('proceso') ? 'En proceso' : 'Idea') });
+  });
+  return out;
+}
 
 const ACCENT_MAP = { á: 'a', é: 'e', í: 'i', ó: 'o', ú: 'u', ñ: 'n', ü: 'u' };
 
@@ -4095,31 +4115,16 @@ function closeImportModal() {
 // para hacer modificaciones masivas afuera y volver a subirlo. Mismas
 // columnas y mismo orden que la plantilla de importación, para que el
 // archivo exportado se pueda volver a importar sin tocar encabezados.
-const EXPORT_CONTENIDOS_HEADERS = ['Título del contenido', 'Remix o contenido original', 'Fecha de publicación', 'Estado', 'Cuenta', 'Plataformas', 'Ubicación', 'Formato', 'Dimensiones', 'Eje de comunicación', 'Tipo de contenido', 'Objetivo', 'Copy', 'Texto en pantalla', 'Prompt sugerido para IA', 'Sugerencia de pieza creativa', 'Guion', 'Link pieza terminada', 'Link material de referencia', 'Notas internas', 'Detalle de los remix (solo lectura)'];
+const EXPORT_CONTENIDOS_HEADERS = ['Título del contenido', 'Remix o contenido original', 'Fecha de publicación', 'Estado', 'Cuenta', 'Plataformas', 'Ubicación', 'Formato', 'Dimensiones', 'Objetivo', 'Eje de comunicación', 'Tipo de contenido', 'Copy', 'Texto en pantalla', 'Prompt sugerido para IA', 'Sugerencia de pieza creativa', 'Guion', 'Pauta', 'Link pieza terminada', 'Link material de referencia', 'Notas internas', 'Remix 1 · Fecha', 'Remix 1 · Link', 'Remix 1 · Estado', 'Remix 1 · Copy', 'Remix 2 · Fecha', 'Remix 2 · Link', 'Remix 2 · Estado', 'Remix 2 · Copy', 'Remix 3 · Fecha', 'Remix 3 · Link', 'Remix 3 · Estado', 'Remix 3 · Copy'];
 
 function contenidoAFilaExport(c) {
+  const rx = [0, 1, 2].flatMap(i => { const r = (c.remixes || [])[i]; return r ? [r.fecha || '', r.link || '', remixEstadoDe(r), r.copy || ''] : ['', '', '', '']; });
   return [
-    c.titulo || '',
-    c.clase || '',
-    c.fechaPub || '',
-    c.estado || '',
-    c.cuenta || '',
-    (c.plataformas || []).join(', '),
-    (c.ubicacion || []).join(', '),
-    (c.formato || []).join(', '),
-    (c.dimensiones || []).join(', '),
-    c.eje || '',
-    c.tipo || '',
-    c.objetivo || '',
-    c.copy || '',
-    c.textoPantalla || '',
-    c.promptIA || '',
-    c.sugerenciaVisual || '',
-    c.guion || '',
-    (c.linkDrive || []).join(', '),
-    (c.linkDriveRef || []).join(', '),
-    c.notas || '',
-    (c.remixes || []).map((r, i) => `Remix ${i + 1}: ${r.fecha || 'sin fecha'} · ${remixEstadoDe(r)}${r.link ? ' · ' + r.link : ''}`).join('\n'),
+    c.titulo || '', c.clase || '', c.fechaPub || '', c.estado || '', c.cuenta || '',
+    (c.plataformas || []).join(', '), (c.ubicacion || []).join(', '), (c.formato || []).join(', '), (c.dimensiones || []).join(', '),
+    c.objetivo || '', c.eje || '', c.tipo || '', c.copy || '', c.textoPantalla || '', c.promptIA || '', c.sugerenciaVisual || '', c.guion || '',
+    EXPORT_PAUTA_LABEL[c.pauta] || '', (c.linkDrive || []).join(', '), (c.linkDriveRef || []).join(', '), c.notas || '',
+    ...rx,
   ];
 }
 
@@ -4408,8 +4413,9 @@ document.getElementById('import-file-input').addEventListener('change', async (e
       const plataformas = importSplitMulti(obj.plataformas);
       const formato = importSplitMulti(obj.formato);
 
-      if (!titulo || !cuenta || !plataformas.length || !formato.length) {
-        errores.push(`Fila ${r + 1}: faltan datos obligatorios (título, cuenta, plataformas o formato).`);
+      const _esRemixFila = importParseClase(obj.clase) === 'Remix';
+      if (!titulo || (!_esRemixFila && (!cuenta || !plataformas.length || !formato.length))) {
+        errores.push(`Fila ${r + 1}: faltan datos obligatorios (título; y para contenidos originales: cuenta, plataformas y formato).`);
         continue;
       }
 
@@ -4428,9 +4434,9 @@ document.getElementById('import-file-input').addEventListener('change', async (e
         ubicacion: _uf.ubicacion,
         formato: _uf.formato,
         dimensiones: importSplitMulti(obj.dimensiones),
-        eje: String(obj.eje || '').trim(),
-        tipo: String(obj.tipo || '').trim(),
-        objetivo: String(obj.objetivo || '').trim(),
+        eje: _impMap(_IMP_EJE, obj.eje),
+        tipo: _impMap(_IMP_TIPO, obj.tipo),
+        objetivo: _impMap(_IMP_OBJ, obj.objetivo),
         copy: String(obj.copy || '').trim(),
         textoPantalla: String(obj.textoPantalla || '').trim(),
         promptIA: String(obj.promptIA || '').trim(),
@@ -4440,6 +4446,7 @@ document.getElementById('import-file-input').addEventListener('change', async (e
         linkDrive: importSplitMulti(obj.linkDrive),
         linkDriveRef: importSplitMulti(obj.linkDriveRef),
         notas: String(obj.notas || '').trim(),
+        ...(importParseRemixes(obj).length ? { remixes: importParseRemixes(obj) } : {}),
         comentarios: [],
         asignado: importResolverAsignado(obj.asignado),
         asignadoOriginal: obj.asignado ? String(obj.asignado).trim() : '',
@@ -4594,6 +4601,7 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
     const actualizacionesPrevias = aActualizar.map(r => {
       const prev = { id: r.match.id };
       IMPORT_DIFF_FIELDS.forEach(f => { prev[f.key] = r.match[f.key]; });
+      prev.remixes = r.match.remixes;
       return prev;
     });
     let nuevosIds = [];
@@ -4610,6 +4618,7 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
       const actualizaciones = aActualizar.map(r => {
         const u = { id: r.match.id };
         IMPORT_DIFF_FIELDS.forEach(f => { u[f.key] = (f.key === 'clase' && !r.row.clase) ? r.match.clase : r.row[f.key]; });
+        if (r.row.remixes) u.remixes = r.row.remixes;
         return u;
       });
       const actualizados = await updateContenidosBulk(clientId, actualizaciones);
