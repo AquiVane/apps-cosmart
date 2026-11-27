@@ -75,3 +75,6 @@ Aprobados por Vaneh (18/10): aviso de prueba, planes, mensaje al terminar la pru
 - **Precios** (decisión de Vaneh 20/10): regular USD 10/mes y USD 120/año; **oferta USD 7/mes y USD 77/año** si se suscribe dentro de los 3 días desde el registro (se queda con ese precio). Backend `apps-calendario.js` (`mensualLista`/`anualLista`). ⚠️ El backend con esto está en `main` pero **sin desplegar** (el core tiene `claude/biensmart-habitos` por delante: no desplegar desde `main` hasta que esa sesión mergee). El front funciona con ambos (si el backend no manda `mensualLista`, no muestra el precio regular).
 - **Recorrido**: el paso de Contenidos señala las pestañas y el de Importar/Exportar señala la barra de Excel (antes señalaba "Nuevo contenido" y el menú de abajo quedaba tapado). La tarjeta del recorrido va arriba si lo señalado está en la mitad inferior. Mientras no hay contenidos se muestra un contenido de **Ejemplo** (solo visual).
 - `dev/mock-api.js` actualizado al modelo nuevo (prueba sin tarjeta, oferta 3 días).
+
+## 27/11 — Estados de contenido nuevos
+Portado desde el Hub: `calendario/js/estados.js` (video vs imagen, Reel/Story = ubicación, Carrusel = formato, Reel tilda Video). Detalle en HANDOFF de `AquiVane/hub`.

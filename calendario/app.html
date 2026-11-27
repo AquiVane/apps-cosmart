@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-title" content="Calendario">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=7">
+  <link rel="stylesheet" href="css/style.css?v=8">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
@@ -175,12 +175,18 @@
         <div class="form-group">
           <label>Estado <span class="req-star">*</span></label>
           <select id="cf-estado" class="form-control">
-            <option value="Idea">💡 Idea</option>
-            <option value="En proceso">✏️ En proceso</option>
-            <option value="En revisión">👁 En revisión</option>
-            <option value="Aprobado">✅ Aprobado</option>
-            <option value="Programado">📅 Programado</option>
-            <option value="Publicado">🚀 Publicado</option>
+            <option value="Sin empezar">Sin empezar</option>
+            <option value="Guión en revisión">Guión en revisión</option>
+            <option value="Guión aprobado">Guión aprobado</option>
+            <option value="Grabado">Grabado</option>
+            <option value="Editado">Editado</option>
+            <option value="Copy en revisión">Copy en revisión</option>
+            <option value="Textos aprobados">Textos aprobados</option>
+            <option value="En proceso">En proceso</option>
+            <option value="En revisión">En revisión</option>
+            <option value="Aprobado">Aprobado</option>
+            <option value="Programado">Programado</option>
+            <option value="Publicado">Publicado</option>
           </select>
         </div>
         <div class="form-group">
@@ -867,9 +873,8 @@
           <select id="if-formato" class="form-control">
             <option>Imagen</option>
             <option>Video</option>
-            <option>Reel</option>
             <option>Carrusel</option>
-            <option>Story</option>
+            <option>GIF</option>
           </select>
         </div>
         <div class="form-group">
@@ -1231,7 +1236,7 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=4"></script>
+<script type="module" src="js/app.js?v=5"></script>
 <script src="js/theme.js"></script>
 <!-- Modal: Gestión de equipo -->
 <div id="equipoModal" class="modal-overlay hidden">

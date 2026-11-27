@@ -1,5 +1,6 @@
 import { requireAuth, logoutUser, changePassword, obtenerCuenta, llamar } from './auth.js';
 import { invitarInstalar, abrirInstalar, puedeInstalar } from './instalar.js';
+import { acomodarUbicFormato, ESTADOS_CONT, ESTADOS_EN_CURSO, tipoPieza, tipoDe, estadosPara, normEstado, normContenidos, convertirEstado, estadoClase, estadoColor, opcionesEstado, aplicarEstadosSelect } from './estados.js?v=1';
 import { montarPlay, detenerPlay, armarNarracionReporte, armarNarracionDashboard } from './play.js';
 import {
   getClientData, saveClientData, getContenidos, saveContenido, deleteContenido, saveContenidosBulk, updateContenidosBulk,
@@ -418,7 +419,7 @@ window.cambiarEstadoNotif = async function(id, estado) {
   // Si el ítem cambiado es de la sección que se está viendo ahora mismo,
   // refresca para que el cambio se vea sin tener que navegar afuera y volver.
   if (n?.itemTipo === 'tarea' && currentSection === 'tareas') { STATE.tareas = await getTareas(clientId); renderSection('tareas'); }
-  else if (n?.itemTipo === 'contenido' && currentSection === 'contenidos') { STATE.contenidos = await getContenidos(clientId); renderSection('contenidos'); }
+  else if (n?.itemTipo === 'contenido' && currentSection === 'contenidos') { STATE.contenidos = normContenidos(await getContenidos(clientId)); renderSection('contenidos'); }
   cargarNotificaciones();
 };
 
@@ -461,7 +462,7 @@ async function loadAllData() {
   });
   const { client, cont, tareas, home } = r;
   STATE.client = client || { id: clientId, nombre: clientId };
-  STATE.contenidos = cont || [];
+  STATE.contenidos = normContenidos(cont || []);
   STATE.tareas = tareas || [];
   // Recurrentes que quedaron "Listo" de antes de que existiera el regenerado
   // inmediato (09/09, pedido de Vaneh: "tiene que tener el mismo
@@ -1323,7 +1324,7 @@ function renderDashboard(container) {
   const total = conts.length;
   const publicados = conts.filter(c => c.estado === 'Publicado').length;
   const programados = conts.filter(c => c.estado === 'Programado').length;
-  const enProceso = conts.filter(c => ['En proceso','Revisión','Aprobado'].includes(c.estado)).length;
+  const enProceso = conts.filter(c => ESTADOS_EN_CURSO.includes(c.estado) || c.estado === 'Aprobado').length;
 
   // ── TAREAS (general + sitio web) — resumen chico, va al lado del gráfico de torta ──
   const tareasActivas = tareasVisibles(STATE.tareas).filter(t => !t.archivado);
@@ -1646,7 +1647,7 @@ function renderHome(container) {
 
   const pubMes = STATE.contenidos.filter(c => c.fechaPub && c.fechaPub.startsWith(hoy.toISOString().slice(0,7))).length;
   const aprobados = STATE.contenidos.filter(c => c.estado === 'Aprobado').length;
-  const enProceso = STATE.contenidos.filter(c => c.estado === 'En proceso').length;
+  const enProceso = STATE.contenidos.filter(c => ESTADOS_EN_CURSO.includes(c.estado)).length;
   const publicados = STATE.contenidos.filter(c => c.estado === 'Publicado').length;
 
   container.innerHTML = `
@@ -1987,7 +1988,7 @@ function bancoRowHtml(c) {
       <td>${(c.plataformas||[]).map(p => platBadge(p)).join(' ')}</td>
       <td onclick="event.stopPropagation()">
         <select class="banco-estado-select" onchange="bancoUpdateEstado('${c.id}', this.value)" style="border:none;background:transparent;font-size:12px;color:var(--text);cursor:pointer;font-weight:600;">
-          ${['Idea','En proceso','En revisión','Aprobado','Programado','Publicado'].map(op => `<option value="${op}" ${c.estado===op?'selected':''}>${op}</option>`).join('')}
+          ${opcionesEstado(tipoDe(c), c.estado)}
         </select>
       </td>
       <td style="font-size:12px;">${Array.isArray(c.formato)?c.formato.join(', '):(c.formato||'')}</td>
@@ -2037,7 +2038,7 @@ function matchPautaFilter(c) {
 // para que vea cómo queda la lista cuando ya tiene contenido cargado.
 function ejemploContenidoHtml() {
   const d = new Date(); d.setDate(d.getDate() + 3);
-  const ej = { id: '__ejemplo', titulo: 'Reel: 3 errores que cometés al empezar a vender', estado: 'Programado', plataformas: ['Instagram'], formato: 'Reel', eje: 'Educativo',
+  const ej = { id: '__ejemplo', titulo: 'Reel: 3 errores que cometés al empezar a vender', estado: 'Programado', plataformas: ['Instagram'], formato: 'Video', ubicacion: ['Reel'], eje: 'Educativo',
     fechaPub: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` };
   return `
     <div id="cont-ejemplo" style="position:relative;">
@@ -2167,10 +2168,17 @@ window.bancoUpdateFecha = async function(id, fecha) {
   STATE.contenidos[i] = c;
 };
 
+function estadoValidoPara(c, estado) {
+  const t = tipoDe(c), ok = estadosPara(t);
+  if (ok.includes(estado)) return estado;
+  const n = convertirEstado(estado, t);
+  return ok.includes(n) ? n : estado;
+}
+
 window.bancoUpdateEstado = async function(id, estado) {
   const c = STATE.contenidos.find(x => x.id === id);
   if (!c) return;
-  c.estado = estado;
+  c.estado = estadoValidoPara(c, estado);
   const saved = await saveContenido(clientId, c);
   const i = STATE.contenidos.findIndex(x => x.id === id);
   STATE.contenidos[i] = saved;
@@ -2255,14 +2263,7 @@ function renderCalendario(container) {
 
 // ─ Kanban Estados ─
 function renderKanbanContenidos(container) {
-  const cols = [
-    { key: 'Idea', label: 'Idea', cls: 's-idea' },
-    { key: 'En proceso', label: 'En proceso', cls: 's-proceso' },
-    { key: 'En revisión', label: 'En revisión', cls: 's-revision' },
-    { key: 'Aprobado', label: 'Aprobado', cls: 's-aprobado' },
-    { key: 'Programado', label: 'Programado', cls: 's-programado' },
-    { key: 'Publicado', label: 'Publicado', cls: 's-publicado' },
-  ];
+  const cols = ESTADOS_CONT.map(e => ({ key: e, label: e, cls: estadoClase(e) }));
 
   container.innerHTML = `<div class="kanban-board" id="kanban-cont">${cols.map(col => {
     const items = STATE.contenidos.filter(c => c.estado === col.key && !c.archivado);
@@ -2298,7 +2299,7 @@ function renderKanbanContenidos(container) {
   initKanbanDrag('#kanban-cont', STATE.contenidos.filter(c => !c.archivado), async (id, newCol) => {
     const c = STATE.contenidos.find(x => x.id === id);
     if (!c) return;
-    c.estado = newCol;
+    c.estado = estadoValidoPara(c, newCol);
     await saveContenido(clientId, c);
     renderContTab('estados');
   });
@@ -2764,7 +2765,7 @@ window.openIdeaModal = function(id) {
   document.getElementById('idea-modal-title').textContent = _editingIdea ? 'Editar idea' : 'Nueva idea';
   document.getElementById('if-titulo').value = i.titulo || '';
   document.getElementById('if-notas').value = i.notas || '';
-  document.getElementById('if-formato').value = i.formato || 'Imagen';
+  document.getElementById('if-formato').value = ({ Reel: 'Video', Story: 'Imagen' })[i.formato] || i.formato || 'Imagen';
   document.querySelectorAll('.idea-plat-check').forEach(cb => {
     cb.checked = (i.plataformas || ['Instagram','Facebook']).includes(cb.value);
   });
@@ -2783,7 +2784,7 @@ window.eliminarIdea = async function(id) {
 window.promoverIdea = async function(id) {
   const idea = STATE.ideas.find(i => i.id === id);
   if (!idea) return;
-  const nuevo = { titulo: idea.titulo, plataformas: idea.plataformas||[], formato: idea.formato||'', estado: 'En proceso', notas: idea.notas||'', linkDriveRef: idea.links||[], eje:'', tipo:'', objetivo:'', fechaPub:'', ubicacion:'Feed', cuenta: STATE.client.instagram||'' };
+  const nuevo = { titulo: idea.titulo, plataformas: idea.plataformas||[], formato: idea.formato||'', estado: 'Sin empezar', notas: idea.notas||'', linkDriveRef: idea.links||[], eje:'', tipo:'', objetivo:'', fechaPub:'', ubicacion: idea.formato === 'Reel' ? 'Reel' : idea.formato === 'Story' ? 'Story' : 'Feed', cuenta: STATE.client.instagram||'' };
   const saved = await saveContenido(clientId, nuevo);
   STATE.contenidos.push(saved);
   STATE.ideas = STATE.ideas.filter(i => i.id !== id);
@@ -2795,7 +2796,7 @@ window.promoverIdea = async function(id) {
 
 // ─ En proceso y revisión ─
 function renderEnProceso(container) {
-  const items = STATE.contenidos.filter(c => ['En proceso','En revisión'].includes(c.estado));
+  const items = STATE.contenidos.filter(c => ESTADOS_EN_CURSO.includes(c.estado));
   container.innerHTML = `
     <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;">En proceso y en revisión (${items.length})</h3>
     ${items.length ? `
@@ -3001,7 +3002,7 @@ document.getElementById('closePreviewModal').addEventListener('click', closePrev
 
 // Platform → allowed ubicaciones
 const PLAT_UBIC = {
-  Instagram: ['Feed', 'Story', 'Reel', 'Carrusel'],
+  Instagram: ['Feed', 'Story', 'Reel'],
   Facebook: ['Feed', 'Story', 'Reel'],
   LinkedIn: ['Feed'],
   'Twitter / X': ['Feed'],
@@ -3013,8 +3014,8 @@ const PLAT_UBIC = {
 
 // Platform → allowed formatos
 const PLAT_FORMAT = {
-  Instagram: ['Imagen', 'Video', 'Reel', 'Carrusel', 'Story', 'GIF'],
-  Facebook: ['Imagen', 'Video', 'Carrusel', 'Story', 'GIF'],
+  Instagram: ['Imagen', 'Video', 'Carrusel', 'GIF'],
+  Facebook: ['Imagen', 'Video', 'Carrusel', 'GIF'],
   LinkedIn: ['Imagen', 'Video', 'Carrusel', 'Documento'],
   'Twitter / X': ['Imagen', 'Video', 'GIF'],
   TikTok: ['Video'],
@@ -3053,7 +3054,24 @@ function updatePlatFilters() {
   fmtDiv.innerHTML = [...fmtSet].map(f =>
     `<label class="check-label"><input type="checkbox" value="${f}" class="fmt-check"${prevFmt.includes(f) ? ' checked' : ''}> ${f}</label>`
   ).join('');
+  syncVideoPorReel();
 }
+
+// Reel (o Shorts) es solo UBICACIÓN: si está tildado, el formato Video se tilda solo.
+function syncVideoPorReel() {
+  const hayReel = Array.from(document.querySelectorAll('.ubic-check:checked')).some(cb => ['Reel', 'Shorts'].includes(cb.value));
+  if (hayReel) { const v = document.querySelector('.fmt-check[value="Video"]'); if (v) v.checked = true; }
+  syncEstadosModal();
+}
+// Habilita/deshabilita los estados del modal según plataforma, ubicación y formato.
+function syncEstadosModal() {
+  const f = Array.from(document.querySelectorAll('.fmt-check:checked')).map(cb => cb.value);
+  const u = Array.from(document.querySelectorAll('.ubic-check:checked')).map(cb => cb.value);
+  aplicarEstadosSelect(document.getElementById('cf-estado'), tipoPieza(f, u));
+}
+document.addEventListener('change', e => {
+  if (e.target && e.target.matches && e.target.matches('.ubic-check, .fmt-check')) { if (e.target.classList.contains('ubic-check')) syncVideoPorReel(); else syncEstadosModal(); updateDuracionVisibility(); }
+});
 
 // Multiple drive links
 let _driveLinks = [];
@@ -3292,7 +3310,7 @@ window.openContenidoModal = function(defaults = {}) {
   document.getElementById('cf-titulo').value = c.titulo || '';
   { const cl = document.getElementById('cf-clase'); if (cl) { cl.value = c.clase || ''; cl.classList.remove('campo-error'); } } // sin valor por defecto: hay que elegir
   document.getElementById('cf-fecha').value = c.fechaPub || defaults.fechaPub || '';
-  document.getElementById('cf-estado').value = c.estado || defaults.estado || 'Idea';
+  document.getElementById('cf-estado').value = normEstado({ ...c, estado: c.estado || defaults.estado || 'Sin empezar' });
   document.getElementById('cf-eje').value = c.eje || 'Institucional';
   document.getElementById('cf-tipo').value = c.tipo || 'Informativo';
   document.getElementById('cf-objetivo').value = c.objetivo || 'Notoriedad';
@@ -3318,11 +3336,12 @@ window.openContenidoModal = function(defaults = {}) {
   updatePlatFilters();
 
   // Ubicacion & Formato — set after filters rendered
-  const ubicArr = Array.isArray(c.ubicacion) ? c.ubicacion : (c.ubicacion ? [c.ubicacion] : defaults.ubicacion || []);
-  const fmtArr = Array.isArray(c.formato) ? c.formato : (c.formato ? [c.formato] : []);
+  const _uf0 = acomodarUbicFormato(Array.isArray(c.ubicacion) ? c.ubicacion : (c.ubicacion ? [c.ubicacion] : defaults.ubicacion || []), Array.isArray(c.formato) ? c.formato : (c.formato ? [c.formato] : []));
+  const ubicArr = _uf0.ubicacion, fmtArr = _uf0.formato;
   setTimeout(() => {
     document.querySelectorAll('.ubic-check').forEach(cb => cb.checked = ubicArr.includes(cb.value));
     document.querySelectorAll('.fmt-check').forEach(cb => cb.checked = fmtArr.includes(cb.value));
+    syncVideoPorReel();
   }, 30);
 
   // Dimensiones
@@ -3377,8 +3396,7 @@ document.getElementById('plat-checks').addEventListener('change', () => { update
 
 function updateDuracionVisibility() {
   setTimeout(() => {
-    const videoFormats = ['Reel','Video','TikTok','Story','YouTube','Short'];
-    const hasVideo = Array.from(document.querySelectorAll('.fmt-check:checked')).some(cb => videoFormats.some(v => cb.value.includes(v)));
+    const hasVideo = Array.from(document.querySelectorAll('.fmt-check:checked')).some(cb => cb.value === 'Video') || Array.from(document.querySelectorAll('.ubic-check:checked')).some(cb => ['Reel', 'Shorts'].includes(cb.value));
     const g = document.getElementById('cf-duracion-group');
     if (g) g.style.display = hasVideo ? '' : 'none';
   }, 60);
@@ -3488,6 +3506,7 @@ document.getElementById('saveContenidoBtn').addEventListener('click', async (e) 
     comentarios: editingContenido?.comentarios || [],
   };
 
+  obj.estado = estadoValidoPara(obj, obj.estado);
   if (!obj.remixes.length && !(editingContenido && Array.isArray(editingContenido.remixes))) delete obj.remixes; // no ensuciar contenidos que nunca tuvieron remix
 
   try {
@@ -3775,7 +3794,7 @@ window.traerGuionDeContenido = async function(contenidoId) {
 // ──────────────────────────────────────────────────────
 // IMPORTAR CONTENIDOS DESDE EXCEL
 // ──────────────────────────────────────────────────────
-const IMPORT_ESTADOS = ['Idea', 'En proceso', 'En revisión', 'Aprobado', 'Programado', 'Publicado'];
+const IMPORT_ESTADOS = ESTADOS_CONT;
 const IMPORT_PAUTA_MAP = {
   'solo organico': 'organico',
   'si dark post': 'dark',
@@ -4264,7 +4283,7 @@ document.getElementById('confirmQuickUpdateBtn').addEventListener('click', async
       for (const match of r.matches) {
         const idx = STATE.contenidos.findIndex(c => c.id === match.id);
         const contenido = idx > -1 ? STATE.contenidos[idx] : match;
-        if (r.estado) contenido.estado = r.estado;
+        if (r.estado) contenido.estado = estadoValidoPara(contenido, normEstado({ ...contenido, estado: r.estado }));
         if (r.notas) contenido.notas = r.notas;
         if (r.linkDrive.length) contenido.linkDrive = r.linkDrive;
         if (r.comentario) {
@@ -4344,17 +4363,19 @@ document.getElementById('import-file-input').addEventListener('change', async (e
       }
 
       const estadoRaw = String(obj.estado || '').trim();
-      const estado = IMPORT_ESTADOS.includes(estadoRaw) ? estadoRaw : 'Idea';
+      const estado = IMPORT_ESTADOS.includes(estadoRaw) ? estadoRaw : (IMPORT_ESTADOS.includes(normEstado({ estado: estadoRaw })) ? normEstado({ estado: estadoRaw }) : 'Sin empezar');
+      const _uf = acomodarUbicFormato(importSplitMulti(obj.ubicacion), formato);
+      const _estV = estadoValidoPara({ formato: _uf.formato, ubicacion: _uf.ubicacion }, estado);
 
       valid.push({
         titulo,
         clase: importParseClase(obj.clase),
         fechaPub: importParseFecha(obj.fechaPub),
-        estado,
+        estado: _estV,
         cuenta,
         plataformas,
-        ubicacion: importSplitMulti(obj.ubicacion),
-        formato,
+        ubicacion: _uf.ubicacion,
+        formato: _uf.formato,
         dimensiones: importSplitMulti(obj.dimensiones),
         eje: String(obj.eje || '').trim(),
         tipo: String(obj.tipo || '').trim(),
@@ -6638,7 +6659,7 @@ function _renderInstruccionesViejo(container) {
         { icon:'pen-line', title:'Contenidos', color:'#3b82f6', items:[
           '<strong>Banco de contenidos:</strong> Tabla con todos los posts. Podés editar desde acá. Se puede filtrar por plataforma y por rango de fechas (Desde/Hasta), además del filtro Orgánico/Pauta.',
           '<strong>Calendario:</strong> Vista mensual. Tocá el "+" de un día para agregar contenido.',
-          '<strong>Estados (Kanban):</strong> Arrastrá los contenidos entre Idea → En proceso → Aprobado → Publicado.',
+          '<strong>Estados (Kanban):</strong> Arrastrá los contenidos entre los estados (Sin empezar → … → Aprobado → Programado → Publicado). Los reels y videos tienen sus propios pasos (guion, grabado, editado) y las imágenes y carruseles los suyos (copy, textos).',
           '<strong>Feed IG:</strong> "Publicado" muestra el feed real; "Borrador (pendiente de aprobación)" es una grilla de 12 casilleros en formato 4:5 donde podés arrastrar imágenes, vincular un contenido ya cargado, o armar una portada de texto con su propio color mientras no haya material -- más la pestaña "Ver como Reel" para lo que marques como tal.',
           '<strong>Muro FB / Stories:</strong> Vista previa del perfil con filtros por estado. Tocá ✏️ para editar.',
           '<strong>Banco de ideas:</strong> Guardá ideas y convertílas en contenido con un clic.',
@@ -7200,14 +7221,10 @@ function fmtNum(n) {
 }
 
 function statusBadge(estado) {
-  const map = { 'Idea':'s-idea','En proceso':'s-proceso','En revisión':'s-revision','Aprobado':'s-aprobado','Programado':'s-programado','Publicado':'s-publicado' };
-  return `<span class="status-badge ${map[estado]||'s-idea'}">${estado||'—'}</span>`;
+  return `<span class="status-badge ${estadoClase(estado)}">${estado||'—'}</span>`;
 }
 
-function statusColor(estado) {
-  const map = { 'Idea':'#94a3b8','En proceso':'#f59e0b','En revisión':'#ec4899','Aprobado':'#10b981','Programado':'#3b82f6','Publicado':'#22c55e' };
-  return map[estado] || '#94a3b8';
-}
+function statusColor(estado) { return estadoColor(estado); }
 
 function statusDot(estado) {
   return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${statusColor(estado)};border:1.5px solid white;"></span>`;
@@ -7449,7 +7466,7 @@ window.rechazarContenido = async function(id) {
   if (!c) return;
   const motivo = prompt('Motivo del rechazo (opcional):');
   if (motivo === null) return;
-  c.estado = 'En proceso';
+  c.estado = tipoDe(c) === 'video' ? 'Editado' : 'En proceso';
   if (motivo) c.notas = `[Rechazado: ${motivo}]${c.notas ? ' — ' + c.notas : ''}`;
   await saveContenido(clientId, c);
   STATE.contenidos[STATE.contenidos.findIndex(x => x.id === id)] = c;
