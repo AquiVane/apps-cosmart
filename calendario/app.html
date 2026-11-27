@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-title" content="Calendario">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=14">
+  <link rel="stylesheet" href="css/style.css?v=15">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
@@ -190,9 +190,39 @@
         <div class="form-group cm-det-wrap" style="grid-column:span 3;">
           <div class="cm-det-acciones">
             <button type="button" class="btn btn-secondary btn-sm" onclick="abrirTeleprompter()" style="font-size:11px;">📺 Abrir teleprompter</button>
-</div>
+          </div>
+          <details class="cm-det" id="det-cf-guion">
+            <summary><span class="cm-lbl">🎬 Guion</span><span class="cm-dot" id="dot-cf-guion"></span></summary>
             <textarea id="cf-guion" class="form-control" rows="6" placeholder="El guion completo de la pieza, para leer mientras se graba. Se puede abrir en modo teleprompter (pantalla completa, fondo negro, letras blancas)..."></textarea>
           </details>
+        </div>
+
+        <div class="cm-row">
+          <div class="form-group">
+            <label>Objetivo</label>
+            <select id="cf-objetivo" class="form-control">
+              <option>Notoriedad</option>
+              <option>Interacción</option>
+              <option>Acción</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Eje de comunicación</label>
+            <select id="cf-eje" class="form-control">
+              <option>Entretener</option>
+              <option>Informar</option>
+              <option>Inspirar</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Tipo de contenido</label>
+            <select id="cf-tipo" class="form-control">
+              <option>Comunicacional</option>
+              <option>Interactivo</option>
+              <option>De venta</option>
+              <option>Viral</option>
+            </select>
+          </div>
         </div>
 
         <div class="cm-row">
@@ -272,34 +302,6 @@
 
       <div id="cont-advanced" class="form-grid advanced-section" style="grid-template-columns:1fr 1fr 1fr;">
 
-        <div class="cm-row">
-          <div class="form-group">
-            <label>Objetivo</label>
-            <select id="cf-objetivo" class="form-control">
-              <option>Notoriedad</option>
-              <option>Interacción</option>
-              <option>Acción</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Eje de comunicación</label>
-            <select id="cf-eje" class="form-control">
-              <option>Entretener</option>
-              <option>Informar</option>
-              <option>Inspirar</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Tipo de contenido</label>
-            <select id="cf-tipo" class="form-control">
-              <option>Comunicacional</option>
-              <option>Interactivo</option>
-              <option>De venta</option>
-              <option>Viral</option>
-            </select>
-          </div>
-        </div>
-
         <div class="form-group" style="grid-column:span 3;">
           <details class="cm-det" id="det-cf-copy">
             <summary><span class="cm-lbl">Copy (texto del posteo)</span><span class="cm-dot" id="dot-cf-copy"></span></summary>
@@ -353,9 +355,7 @@
                 <kbd style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:3px;padding:1px 5px;font-size:11px;">Ctrl+V</kbd> para pegar imagen · Imágenes, videos, PDF
               </span>
               <button type="button" onclick="document.getElementById('img-file-input').click()" class="btn btn-secondary btn-sm" style="font-size:11px;">📎 Subir archivo</button>
-          </div>
-          <details class="cm-det" id="det-cf-guion">
-            <summary><span class="cm-lbl">🎬 Guion</span><span class="cm-dot" id="dot-cf-guion"></span></summary>
+            </div>
             <p style="font-size:10px;color:#94a3b8;margin-top:4px;">Videos o archivos pesados → subí a Drive y pegá el link arriba. Límite sugerido: 50 MB.</p>
             <input type="file" id="img-file-input" accept="image/*,video/*,.pdf,.doc,.docx" multiple style="display:none;">
           </div>
@@ -1243,7 +1243,7 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=9"></script>
+<script type="module" src="js/app.js?v=10"></script>
 <script src="js/theme.js"></script>
 <!-- Modal: Gestión de equipo -->
 <div id="equipoModal" class="modal-overlay hidden">
