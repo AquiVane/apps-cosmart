@@ -3312,7 +3312,7 @@ function aplicarModoClase() {
   const modal = document.getElementById('contenidoModal'); if (!modal) return;
   const clase = document.getElementById('cf-clase')?.value || '';
   const esRemix = !esPropioAgencia && clase === 'Remix';
-  modal.querySelectorAll('.form-grid > .form-group').forEach(g => {
+  modal.querySelectorAll('.form-grid .form-group').forEach(g => {
     const mantiene = _CM_SOLO_REMIX.some(id => g.id === id || g.querySelector('#' + id));
     let oculto = esRemix && !mantiene;
     if (g.id === 'remix-section') oculto = !esRemix;
@@ -3321,6 +3321,23 @@ function aplicarModoClase() {
   });
 }
 document.getElementById('cf-clase')?.addEventListener('change', aplicarModoClase);
+
+// Dimensión: desplegable de selección múltiple (muestra lo elegido) + campos largos (copy, texto, guion, prompt, sugerencia) contraídos por defecto.
+function actualizarDimResumen() {
+  const el = document.getElementById('cf-dim-resumen'); if (!el) return;
+  const v = Array.from(document.querySelectorAll('.dim-check:checked')).map(cb => cb.value);
+  el.textContent = v.length ? v.join(' · ') : 'Elegir…';
+}
+document.addEventListener('change', e => { if (e.target.classList?.contains('dim-check')) actualizarDimResumen(); });
+document.addEventListener('click', e => document.querySelectorAll('.cm-multi[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; }));
+function marcarCamposLargos() {
+  document.querySelectorAll('#contenidoModal .cm-det').forEach(d => {
+    const ta = d.querySelector('textarea'), dot = d.querySelector('.cm-dot');
+    d.open = false; // siempre contraídos al abrir
+    if (dot) dot.textContent = ta && ta.value.trim() ? '● con contenido' : '';
+    if (ta && !ta.dataset.dotBound) { ta.dataset.dotBound = '1'; ta.addEventListener('input', () => { if (dot) dot.textContent = ta.value.trim() ? '● con contenido' : ''; }); }
+  });
+}
 
 window.openContenidoModal = function(defaults = {}) {
   defaults = defaults || {};
@@ -3332,8 +3349,8 @@ window.openContenidoModal = function(defaults = {}) {
   { const cl = document.getElementById('cf-clase'); if (cl) { cl.value = c.clase || ''; cl.classList.remove('campo-error'); } } // sin valor por defecto: hay que elegir
   document.getElementById('cf-fecha').value = c.fechaPub || defaults.fechaPub || '';
   document.getElementById('cf-estado').value = normEstado({ ...c, estado: c.estado || defaults.estado || 'Sin empezar' });
-  document.getElementById('cf-eje').value = c.eje || 'Institucional';
-  document.getElementById('cf-tipo').value = c.tipo || 'Informativo';
+  document.getElementById('cf-eje').value = ({ Institucional: 'Informar', Entretenimiento: 'Entretener', Comercial: 'Informar', 'Interacción': 'Entretener', Educativo: 'Informar', Inspiracional: 'Inspirar' })[c.eje] || c.eje || 'Informar'; // ejes viejos -> Entretener / Informar / Inspirar
+  document.getElementById('cf-tipo').value = ({ Informativo: 'Comunicacional', Promocional: 'De venta', Sorteo: 'Interactivo', Viral: 'Viral', Evento: 'Comunicacional', 'Celebración': 'Comunicacional', Tutorial: 'Comunicacional' })[c.tipo] || c.tipo || 'Comunicacional'; // tipos viejos -> Comunicacional / Interactivo / De venta / Viral
   document.getElementById('cf-objetivo').value = ({ Engagement: 'Interacción', Alcance: 'Notoriedad', 'Conversión': 'Acción', 'Tráfico': 'Acción' })[c.objetivo] || c.objetivo || 'Notoriedad'; // objetivos viejos -> los 3 vigentes
   document.getElementById('cf-copy').value = c.copy || '';
   document.getElementById('cf-texto-pantalla').value = c.textoPantalla || '';
@@ -3368,11 +3385,11 @@ window.openContenidoModal = function(defaults = {}) {
   // Dimensiones
   const dimArr = Array.isArray(c.dimensiones) ? c.dimensiones : [];
   document.querySelectorAll('.dim-check').forEach(cb => cb.checked = dimArr.includes(cb.value));
+  actualizarDimResumen();
 
   // Pauta
   const pautaVal = c.pauta || 'organico';
-  const pautaRadio = document.querySelector(`input[name="cf-pauta"][value="${pautaVal}"]`);
-  if (pautaRadio) pautaRadio.checked = true;
+  document.getElementById('cf-pauta').value = ['organico', 'dark', 'dark-organico'].includes(pautaVal) ? pautaVal : 'organico';
   document.getElementById('pauta-hint').style.display = pautaVal !== 'organico' ? '' : 'none';
 
   // Multiple links
@@ -3405,6 +3422,7 @@ window.openContenidoModal = function(defaults = {}) {
   _copyLinkContBtn.onclick = () => copiarLinkItem('contenido', c.id);
   document.getElementById('contenidoModal').classList.remove('hidden');
   aplicarModoClase();
+  marcarCamposLargos();
   { const mb = document.querySelector('#contenidoModal .modal-body'); if (mb) mb.scrollTop = 0; document.getElementById('contenidoModal').scrollTop = 0; } // siempre abre ARRIBA (no donde se dejó)
 };
 
@@ -3426,10 +3444,8 @@ function updateDuracionVisibility() {
 }
 
 // Pauta radios → show/hide hint
-document.querySelectorAll('input[name="cf-pauta"]').forEach(r => {
-  r.addEventListener('change', () => {
-    document.getElementById('pauta-hint').style.display = r.value !== 'organico' ? '' : 'none';
-  });
+document.getElementById('cf-pauta').addEventListener('change', e => {
+  document.getElementById('pauta-hint').style.display = e.target.value !== 'organico' ? '' : 'none';
 });
 
 // Image paste & file pick — upload via button onclick in HTML, paste via Ctrl+V listener below
@@ -3490,7 +3506,7 @@ document.getElementById('saveContenidoBtn').addEventListener('click', async (e) 
 
   const ubicacion = Array.from(document.querySelectorAll('.ubic-check:checked')).map(cb => cb.value);
   const dimensiones = Array.from(document.querySelectorAll('.dim-check:checked')).map(cb => cb.value);
-  const pauta = document.querySelector('input[name="cf-pauta"]:checked')?.value || 'organico';
+  const pauta = document.getElementById('cf-pauta').value || 'organico';
 
   // Auto-vínculo con un guion suelto del repositorio (pedido de Vaneh:
   // "el título es el que se transforma en contenido después") -- solo
