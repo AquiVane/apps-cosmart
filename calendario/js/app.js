@@ -952,6 +952,7 @@ function renderSection(sec) {
     actions.appendChild(importBtn);
     const btn = document.createElement('button');
     btn.className = 'btn btn-primary';
+    btn.style.cssText = 'background:#E02020;border-color:#E02020;color:#fff;';
     btn.textContent = '+ Nueva campaña';
     btn.onclick = () => openCampanaModal(null);
     actions.appendChild(btn);
@@ -3383,6 +3384,7 @@ window.openContenidoModal = function(defaults = {}) {
   _copyLinkContBtn.classList.toggle('hidden', !editingContenido);
   _copyLinkContBtn.onclick = () => copiarLinkItem('contenido', c.id);
   document.getElementById('contenidoModal').classList.remove('hidden');
+  { const mb = document.querySelector('#contenidoModal .modal-body'); if (mb) mb.scrollTop = 0; document.getElementById('contenidoModal').scrollTop = 0; } // siempre abre ARRIBA (no donde se dejó)
 };
 
 window.openContenidoModalById = function(id) { openContenidoModal({ id }); };
